@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -44,7 +44,7 @@
 #include "my_macros.h"
 #include "my_psi_config.h"
 #include "my_sys.h"
-#include "mysql/psi/psi_base.h"
+#include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/thread_pool_priv.h"  // inc_thread_created
 #include "sql/sql_class.h"           // THD
 #include "thr_mutex.h"
@@ -339,7 +339,7 @@ class Run_free_function : public Do_THD_Impl {
 
   Run_free_function(do_thd_impl *f, T arg) : m_func(f), m_arg(arg) {}
 
-  virtual void operator()(THD *thd) { (*m_func)(thd, m_arg); }
+  void operator()(THD *thd) override { (*m_func)(thd, m_arg); }
 
  private:
   do_thd_impl *m_func;

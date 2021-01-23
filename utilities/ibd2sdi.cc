@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2016, 2020, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2016, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -231,6 +231,11 @@ static struct my_option ibd2sdi_options[] = {
     {nullptr, 0, nullptr, nullptr, nullptr, nullptr, GET_NO_ARG, NO_ARG, 0, 0,
      0, nullptr, 0, nullptr}};
 
+/** A dummy implementation.  Actual implementation available in fil0fil.cc */
+std::ostream &Fil_page_header::print(std::ostream &out) const noexcept {
+  return out;
+}
+
 /** Report a failed assertion.
 @param[in]	expr	the failed assertion if not NULL
 @param[in]	file	source file containing the assertion
@@ -407,7 +412,7 @@ fatal::~fatal() {
 /* TODO: Improve Object creation & destruction on DBUG_OFF */
 class dbug : public logger {
  public:
-  ~dbug() { DBUG_PRINT("ibd2sdi", ("%s", m_oss.str().c_str())); }
+  ~dbug() override { DBUG_PRINT("ibd2sdi", ("%s", m_oss.str().c_str())); }
 };
 }  // namespace ib
 

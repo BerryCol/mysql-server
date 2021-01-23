@@ -2,7 +2,7 @@
 #define HANDLER_INCLUDED
 
 /*
-   Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2000, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -48,6 +48,7 @@
 #include "my_alloc.h"
 #include "my_base.h"
 #include "my_bitmap.h"
+#include "my_checksum.h"  // ha_checksum
 #include "my_compiler.h"
 #include "my_dbug.h"
 #include "my_double2ulonglong.h"
@@ -57,6 +58,7 @@
 #include "my_table_map.h"
 #include "my_thread_local.h"  // my_errno
 #include "mysql/components/services/psi_table_bits.h"
+#include "nullable.h"          // Nullable
 #include "sql/dd/object_id.h"  // dd::Object_id
 #include "sql/dd/string_type.h"
 #include "sql/dd/types/object_table.h"  // dd::Object_table
@@ -69,7 +71,6 @@
 #include "typelib.h"
 
 class Alter_info;
-class Candidate_table_order;
 class Create_field;
 class Field;
 class Item;
@@ -778,6 +779,19 @@ constexpr const uint64_t HA_CREATE_USED_START_TRANSACTION{1ULL << 31};
 constexpr const uint64_t HA_CREATE_USED_ENGINE_ATTRIBUTE{1ULL << 32};
 constexpr const uint64_t HA_CREATE_USED_SECONDARY_ENGINE_ATTRIBUTE{1ULL << 33};
 
+/**
+  ALTER SCHEMA|DATABASE has an explicit READ_ONLY clause.
+
+  Implies HA_CREATE_USED_READ_ONLY.
+*/
+constexpr const uint64_t HA_CREATE_USED_READ_ONLY{1ULL << 34};
+
+/**
+  These flags convey that the options AUTOEXTEND_SIZE has been
+  specified in the CREATE TABLE statement
+*/
+constexpr const uint64_t HA_CREATE_USED_AUTOEXTEND_SIZE{1ULL << 35};
+
 /*
   End of bits used in used_fields
 */
@@ -847,12 +861,13 @@ class st_alter_tablespace {
   ulonglong undo_buffer_size = 8 * 1024 * 1024;  // Default 8 MByte
   ulonglong redo_buffer_size = 8 * 1024 * 1024;  // Default 8 MByte
   ulonglong initial_size = 128 * 1024 * 1024;    // Default 128 MByte
-  ulonglong autoextend_size = 0;                 // No autoextension as default
+  Mysql::Nullable<ulonglong> autoextend_size;    // No autoextension as default
   ulonglong max_size = 0;         // Max size == initial size => no extension
   ulonglong file_block_size = 0;  // 0=default or must be a valid Page Size
   uint nodegroup_id = UNDEF_NODEGROUP;
   bool wait_until_completed = true;
   const char *ts_comment = nullptr;
+  const char *encryption = nullptr;
 
   bool is_tablespace_command() {
     return ts_cmd_type == CREATE_TABLESPACE ||
@@ -1356,8 +1371,7 @@ typedef uint (*partition_flags_t)();
   @param tablespace_name    Name of the tablespace.
 
   @return Tablespace name validity.
-    @retval == false: The tablespace name is invalid.
-    @retval == true:  The tablespace name is valid.
+    @retval Whether the tablespace name is valid.
 */
 typedef bool (*is_valid_tablespace_name_t)(ts_command_type ts_cmd,
                                            const char *tablespace_name);
@@ -2148,9 +2162,10 @@ using optimize_secondary_engine_t = bool (*)(THD *thd, LEX *lex);
   far.
 
   @param thd thread context
-  @param join the JOIN to evaluate
-  @param table_order the ordering of the tables in the candidate plan
+  @param join the candidate plan to evaluate
   @param optimizer_cost the cost estimate calculated by the optimizer
+  @param[out] use_best_so_far true if the optimizer should stop searching for
+                      a better plan and use the best plan it has seen so far
   @param[out] cheaper true if the candidate is the best plan seen so far for
                       this JOIN (must be true if it is the first plan seen),
                       false otherwise
@@ -2158,9 +2173,11 @@ using optimize_secondary_engine_t = bool (*)(THD *thd, LEX *lex);
 
   @return false on success, or true if an error has been raised
 */
-using compare_secondary_engine_cost_t = bool (*)(
-    THD *thd, const JOIN &join, const Candidate_table_order &table_order,
-    double optimizer_cost, bool *cheaper, double *secondary_engine_cost);
+using compare_secondary_engine_cost_t = bool (*)(THD *thd, const JOIN &join,
+                                                 double optimizer_cost,
+                                                 bool *use_best_so_far,
+                                                 bool *cheaper,
+                                                 double *secondary_engine_cost);
 
 // FIXME: Temporary workaround to enable storage engine plugins to use the
 // before_commit hook. Remove after WL#11320 has been completed.
@@ -2653,6 +2670,7 @@ enum enum_stats_auto_recalc : int {
 struct HA_CREATE_INFO {
   const CHARSET_INFO *table_charset{nullptr};
   const CHARSET_INFO *default_table_charset{nullptr};
+  bool schema_read_only{false};
   LEX_STRING connect_string{nullptr, 0};
   const char *password{nullptr};
   const char *tablespace{nullptr};
@@ -2727,6 +2745,10 @@ struct HA_CREATE_INFO {
   LEX_CSTRING engine_attribute = NULL_CSTR;
   LEX_CSTRING secondary_engine_attribute = NULL_CSTR;
 
+  ulonglong m_implicit_tablespace_autoextend_size{0};
+
+  bool m_implicit_tablespace_autoextend_size_change{true};
+
   /**
     Fill HA_CREATE_INFO to be used by ALTER as well as upgrade code.
     This function separates code from mysql_prepare_alter_table() to be
@@ -2740,7 +2762,7 @@ struct HA_CREATE_INFO {
   */
 
   void init_create_options_from_share(const TABLE_SHARE *share,
-                                      uint used_fields);
+                                      uint64_t used_fields);
 };
 
 /**
@@ -2983,6 +3005,9 @@ class Alter_inplace_info {
 
   // Suspend check constraint.
   static const HA_ALTER_FLAGS SUSPEND_CHECK_CONSTRAINT = 1ULL << 48;
+
+  // Alter column visibility.
+  static const HA_ALTER_FLAGS ALTER_COLUMN_VISIBILITY = 1ULL << 49;
 
   /**
     Create options (like MAX_ROWS) for the new version of table.
@@ -4410,8 +4435,6 @@ class handler {
   int ha_create(const char *name, TABLE *form, HA_CREATE_INFO *info,
                 dd::Table *table_def);
 
-  int ha_prepare_load_table(const TABLE &table);
-
   int ha_load_table(const TABLE &table);
 
   int ha_unload_table(const char *db_name, const char *table_name,
@@ -4421,14 +4444,20 @@ class handler {
     Initializes a parallel scan. It creates a parallel_scan_ctx that has to
     be used across all parallel_scan methods. Also, gets the number of
     threads that would be spawned for parallel scan.
-    @param[out] scan_ctx   The parallel scan context.
-    @param[out] num_threads Number of threads used for the scan.
+    @param[out] scan_ctx              The parallel scan context.
+    @param[out] num_threads           Number of threads used for the scan.
+    @param[in]  use_reserved_threads  true if reserved threads are to be used
+                                      if we exhaust the max cap of number of
+                                      parallel read threads that can be
+                                      spawned at a time
     @return error code
     @retval 0 on success
   */
   virtual int parallel_scan_init(void *&scan_ctx MY_ATTRIBUTE((unused)),
-                                 size_t &num_threads MY_ATTRIBUTE((unused))) {
-    return (0);
+                                 size_t *num_threads MY_ATTRIBUTE((unused)),
+                                 bool use_reserved_threads
+                                     MY_ATTRIBUTE((unused))) {
+    return 0;
   }
 
   /**
@@ -4494,7 +4523,7 @@ class handler {
                             Load_init_cbk init_fn MY_ATTRIBUTE((unused)),
                             Load_cbk load_fn MY_ATTRIBUTE((unused)),
                             Load_end_cbk end_fn MY_ATTRIBUTE((unused))) {
-    return (0);
+    return 0;
   }
 
   /**
@@ -5999,8 +6028,7 @@ class handler {
                                (can be NULL for temporary tables created
                                by optimizer).
 
-    @retval   >0               Error.
-    @retval    0               Success.
+    @return  Zero on success, nonzero otherwise.
   */
   virtual int delete_table(const char *name, const dd::Table *table_def);
 
@@ -6187,19 +6215,6 @@ class handler {
   @param[in] scan_ctx  Scan context of the sampling
   @return 0 for success, else failure. */
   virtual int sample_end(void *scan_ctx);
-
-  /**
-   * Prepares secondary engine for loading a table.
-   *
-   * @param table Table opened in primary storage engine. Its read_set tells
-   * which columns to load.
-   *
-   * @return 0 if success, error code otherwise.
-   */
-  virtual int prepare_load_table(const TABLE &table MY_ATTRIBUTE((unused))) {
-    DBUG_ASSERT(false);
-    return HA_ERR_WRONG_COMMAND;
-  }
 
   /**
    * Loads a table into its defined secondary storage engine.
@@ -6454,6 +6469,9 @@ class handler {
     ha_share = arg_ha_share;
     return false;
   }
+
+  void set_ha_table(TABLE *table_arg) { table = table_arg; }
+
   int get_lock_type() const { return m_lock_type; }
 
   /**

@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2009, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -962,7 +962,7 @@ class binlog_trx_cache_data : public binlog_cache_data {
         m_cannot_rollback(false),
         before_stmt_pos(MY_OFF_T_UNDEF) {}
 
-  void reset() {
+  void reset() override {
     DBUG_TRACE;
     DBUG_PRINT("enter", ("before_stmt_pos: %llu", (ulonglong)before_stmt_pos));
     m_cannot_rollback = false;
@@ -1280,7 +1280,7 @@ class Binlog_event_writer : public Basic_ostream {
     if (have_checksum) checksum = my_checksum(checksum, header, header_len);
   }
 
-  bool write(const unsigned char *buffer, my_off_t length) {
+  bool write(const unsigned char *buffer, my_off_t length) override {
     DBUG_TRACE;
 
     while (length > 0) {
@@ -1439,7 +1439,7 @@ bool MYSQL_BIN_LOG::assign_automatic_gtids_to_flush_group(THD *first_seen) {
               head->get_transaction()->get_rpl_transaction_ctx()->get_sidno(),
               head->get_transaction()->get_rpl_transaction_ctx()->get_gno(),
               &locked_sidno) != RETURN_STATUS_OK) {
-        head->commit_error = THD::CE_FLUSH_ERROR;
+        head->commit_error = THD::CE_FLUSH_GNO_EXHAUSTED_ERROR;
         error = true;
       }
     } else {
@@ -2092,7 +2092,8 @@ int binlog_cache_data::flush(THD *thd, my_off_t *bytes_written,
     Binlog_event_writer writer(mysql_bin_log.get_binlog_file());
 
     /* The GTID ownership process might set the commit_error */
-    error = (thd->commit_error == THD::CE_FLUSH_ERROR);
+    error = (thd->commit_error == THD::CE_FLUSH_ERROR ||
+             thd->commit_error == THD::CE_FLUSH_GNO_EXHAUSTED_ERROR);
 
     DBUG_EXECUTE_IF("simulate_binlog_flush_error", {
       if (rand() % 3 == 0) {
@@ -2527,7 +2528,7 @@ int MYSQL_BIN_LOG::rollback(THD *thd, bool all) {
     cache_mngr->stmt_cache.reset();
   } else if (!cache_mngr->stmt_cache.is_binlog_empty()) {
     if (thd->lex->sql_command == SQLCOM_CREATE_TABLE &&
-        thd->lex->select_lex->get_fields_list()->elements && /* With select */
+        !thd->lex->select_lex->field_list_is_empty() && /* With select */
         !(thd->lex->create_info->options & HA_LEX_CREATE_TMP_TABLE) &&
         thd->is_current_stmt_binlog_format_row()) {
       /*
@@ -2889,7 +2890,7 @@ static bool binlog_savepoint_rollback_can_release_mdl(handlerton *, THD *thd) {
 class Adjust_offset : public Do_THD_Impl {
  public:
   Adjust_offset(my_off_t value) : m_purge_offset(value) {}
-  virtual void operator()(THD *thd) {
+  void operator()(THD *thd) override {
     LOG_INFO *linfo;
     mysql_mutex_lock(&thd->LOCK_thd_data);
     if ((linfo = thd->current_linfo)) {
@@ -2946,7 +2947,7 @@ class Log_in_use : public Do_THD_Impl {
   Log_in_use(const char *value) : m_log_name(value), m_count(0) {
     m_log_name_len = strlen(m_log_name) + 1;
   }
-  virtual void operator()(THD *thd) {
+  void operator()(THD *thd) override {
     LOG_INFO *linfo;
     mysql_mutex_lock(&thd->LOCK_thd_data);
     if ((linfo = thd->current_linfo)) {
@@ -3422,13 +3423,13 @@ bool show_binlog_events(THD *thd, MYSQL_BIN_LOG *binary_log) {
   @retval true failure
 */
 bool mysql_show_binlog_events(THD *thd) {
-  List<Item> field_list;
   DBUG_TRACE;
 
   DBUG_ASSERT(thd->lex->sql_command == SQLCOM_SHOW_BINLOG_EVENTS);
 
+  mem_root_deque<Item *> field_list(thd->mem_root);
   Log_event::init_show_field_list(&field_list);
-  if (thd->send_result_metadata(&field_list,
+  if (thd->send_result_metadata(field_list,
                                 Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
     return true;
 
@@ -5010,9 +5011,7 @@ bool MYSQL_BIN_LOG::open_binlog(
     At every rotate memorize the last transaction counter state to use it as
     offset at logging the transaction logical timestamps.
   */
-  mysql_mutex_lock(&LOCK_slave_trans_dep_tracker);
   m_dependency_tracker.rotate();
-  mysql_mutex_unlock(&LOCK_slave_trans_dep_tracker);
 
   close_purge_index_file();
 
@@ -8687,8 +8686,8 @@ void MYSQL_BIN_LOG::handle_binlog_flush_or_sync_error(THD *thd,
   else
     strncpy(errmsg, message, MYSQL_ERRMSG_SIZE - 1);
   if (binlog_error_action == ABORT_SERVER) {
-    char err_buff[MYSQL_ERRMSG_SIZE + 27];
-    sprintf(err_buff, "%s Hence aborting the server.", errmsg);
+    char err_buff[MYSQL_ERRMSG_SIZE + 25];
+    sprintf(err_buff, "%s Server is being stopped.", errmsg);
     exec_binlog_error_action_abort(err_buff);
   } else {
     DEBUG_SYNC(thd, "before_binlog_closed_due_to_error");
@@ -8817,7 +8816,11 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     /*
       Handle flush error (if any) after leader finishes it's flush stage.
     */
-    handle_binlog_flush_or_sync_error(thd, false /* need_lock_log */, nullptr);
+    handle_binlog_flush_or_sync_error(
+        thd, false /* need_lock_log */,
+        (thd->commit_error == THD::CE_FLUSH_GNO_EXHAUSTED_ERROR)
+            ? ER_THD(thd, ER_GNO_EXHAUSTED)
+            : nullptr);
   }
 
   DEBUG_SYNC(thd, "bgc_after_flush_stage_before_sync_stage");
@@ -9756,6 +9759,24 @@ static bool has_write_table_with_nondeterministic_default(
   return false;
 }
 
+/**
+  Checks if we have reads from ACL tables in table list.
+
+  @param  thd       Current thread
+  @param  tl_list   TABLE_LIST used by current command.
+
+  @returns true, if we statement is unsafe, otherwise false.
+*/
+static bool has_acl_table_read(THD *thd, const TABLE_LIST *tl_list) {
+  for (const TABLE_LIST *tl = tl_list; tl != nullptr; tl = tl->next_global) {
+    if (is_acl_table_in_non_LTM(tl, thd->locked_tables_mode) &&
+        (tl->lock_descriptor().type == TL_READ_DEFAULT ||
+         tl->lock_descriptor().type == TL_READ_HIGH_PRIORITY))
+      return true;
+  }
+  return false;
+}
+
 /*
   Function to check whether the table in query uses a fulltext parser
   plugin or not.
@@ -10031,6 +10052,18 @@ int THD::decide_logging_format(TABLE_LIST *tables) {
               lex->first_not_own_table()))
         lex->set_stmt_unsafe(
             LEX::BINLOG_STMT_UNSAFE_DEFAULT_EXPRESSION_IN_SUBSTATEMENT);
+
+      /*
+        A DML or DDL statement is unsafe if it reads a ACL table while
+        modifing the table, because SE skips acquiring row locks.
+        Therefore rows seen by DML or DDL may not have same effect on slave.
+
+        We skip checking the same under lock tables mode, because we do
+        not skip row locks on ACL table in this mode.
+      */
+      if (has_acl_table_read(this, tables)) {
+        lex->set_stmt_unsafe(LEX::BINLOG_STMT_UNSAFE_ACL_TABLE_READ_IN_DML_DDL);
+      }
     }
 
     /*
@@ -10579,20 +10612,20 @@ bool THD::is_ddl_gtid_compatible() {
       mysql_bin_log.is_open() == false)
     return true;
 
-  DBUG_PRINT("info",
-             ("SQLCOM_CREATE:%d CREATE-TMP:%d SELECT:%d SQLCOM_DROP:%d "
-              "DROP-TMP:%d trx:%d",
-              lex->sql_command == SQLCOM_CREATE_TABLE,
-              (lex->sql_command == SQLCOM_CREATE_TABLE &&
-               (lex->create_info->options & HA_LEX_CREATE_TMP_TABLE)),
-              lex->select_lex->fields_list.elements,
-              lex->sql_command == SQLCOM_DROP_TABLE,
-              (lex->sql_command == SQLCOM_DROP_TABLE && lex->drop_temporary),
-              in_multi_stmt_transaction_mode()));
+  DBUG_PRINT(
+      "info",
+      ("SQLCOM_CREATE:%d CREATE-TMP:%d SELECT:%zu SQLCOM_DROP:%d "
+       "DROP-TMP:%d trx:%d",
+       lex->sql_command == SQLCOM_CREATE_TABLE,
+       (lex->sql_command == SQLCOM_CREATE_TABLE &&
+        (lex->create_info->options & HA_LEX_CREATE_TMP_TABLE)),
+       lex->select_lex->fields.size(), lex->sql_command == SQLCOM_DROP_TABLE,
+       (lex->sql_command == SQLCOM_DROP_TABLE && lex->drop_temporary),
+       in_multi_stmt_transaction_mode()));
 
   if (lex->sql_command == SQLCOM_CREATE_TABLE &&
       !(lex->create_info->options & HA_LEX_CREATE_TMP_TABLE) &&
-      lex->select_lex->get_fields_list()->elements) {
+      !lex->select_lex->field_list_is_empty()) {
     if (!(get_default_handlerton(this, lex->create_info->db_type)->flags &
           HTON_SUPPORTS_ATOMIC_DDL)) {
       /*

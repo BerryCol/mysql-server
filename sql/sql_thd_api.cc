@@ -1,5 +1,4 @@
-/*
-   Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -19,8 +18,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
-*/
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #include <string.h>
 #include <sys/types.h>
@@ -41,6 +39,7 @@
 #include "mysql/plugin.h"
 #include "mysql/psi/mysql_mutex.h"
 #include "mysql_com.h"
+#include "sql/auth/auth_acls.h"
 #include "sql/auth/sql_security_ctx.h"
 #include "sql/conn_handler/connection_handler_manager.h"
 #include "sql/current_thd.h"  // current_thd
@@ -661,4 +660,10 @@ void remove_ssl_err_thread_state() {
 
 unsigned int thd_get_num_vcpus() {
   return resourcegroups::platform::num_vcpus();
+}
+
+bool thd_check_connection_admin_privilege(MYSQL_THD thd) {
+  Security_context *sctx = thd->security_context();
+  return (!(sctx->check_access(SUPER_ACL) ||
+            sctx->has_global_grant(STRING_WITH_LEN("CONNECTION_ADMIN")).first));
 }

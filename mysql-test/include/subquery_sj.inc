@@ -21,10 +21,13 @@ create table t3 (a int not null, b int, primary key (a));
 insert into t1 values (1,10), (2,20), (3,30),  (4,40);
 insert into t2 values (2), (3), (4), (5);
 insert into t3 values (10,3), (20,4), (30,5);
+--sorted_result
 select * from t2 where t2.a in (select a from t1);
 explain select * from t2 where t2.a in (select a from t1);
+--sorted_result
 select * from t2 where t2.a in (select a from t1 where t1.b <> 30);
 explain select * from t2 where t2.a in (select a from t1 where t1.b <> 30);
+--sorted_result
 select * from t2 where t2.a in (select t1.a from t1,t3 where t1.b=t3.a);
 explain select * from t2 where t2.a in (select t1.a from t1,t3 where t1.b=t3.a);
 drop table t1, t2, t3;
@@ -40,14 +43,19 @@ select rand()*100000+200,rand()*100000 from t0 A, t0 B, t0 C, t0 D;
 
 insert into t2 values (2), (3), (4), (5);
 insert into t3 values (10,3), (20,4), (30,5);
+--sorted_result
 select * from t2 where t2.a in (select a from t1);
 explain select * from t2 where t2.a in (select a from t1);
+--sorted_result
 select * from t2 where t2.a in (select a from t1 where t1.b <> 30);
 explain select * from t2 where t2.a in (select a from t1 where t1.b <> 30);
+--sorted_result
 select * from t2 where t2.a in (select t1.a from t1,t3 where t1.b=t3.a);
 explain select * from t2 where t2.a in (select t1.a from t1,t3 where t1.b=t3.a);
 insert into t1 values (3,31);
+--sorted_result
 select * from t2 where t2.a in (select a from t1 where t1.b <> 30);
+--sorted_result
 select * from t2 where t2.a in (select a from t1 where t1.b <> 30 and t1.b <> 31);
 explain select * from t2 where t2.a in (select a from t1 where t1.b <> 30);
 drop table t0, t1, t2, t3;
@@ -173,6 +181,7 @@ while ($i)
          eval PREPARE stmt FROM "$query";
          --sorted_result
          EXECUTE stmt;
+	 --echo
          --sorted_result
          EXECUTE stmt;
          DEALLOCATE PREPARE stmt;
@@ -195,6 +204,7 @@ while ($i)
          eval PREPARE stmt FROM "$query";
          --sorted_result
          EXECUTE stmt;
+	 --echo
          --sorted_result
          EXECUTE stmt;
          DEALLOCATE PREPARE stmt;
@@ -452,6 +462,7 @@ explain select * from t3 where a in
 
 # In subquery_sj_loosescan_bka_nobnl (ie., with loose scan), demonstrates
 # how NestedLoopSemiJoinWithDuplicateRemovalIterator is used.
+--skip_if_hypergraph  # Depends on query plan.
 explain format=tree select * from t3 where a in
           (select t1.kp1 from t1,t4 where kp1<20 and t4.pk=t1.c);
 --sorted_result
@@ -482,6 +493,7 @@ where c.a in (select a from t1 d);
 flush status;
 select count(*) from t0 a, t0 b, t0 c
 where c.a in (select a from t1 d);
+--skip_if_hypergraph  # Depends on the query plan.
 show status like 'Created_tmp_disk_tables';
 
 set @@max_heap_table_size= @save_max_heap_table_size;
@@ -489,6 +501,7 @@ set session internal_tmp_mem_storage_engine=default;
 flush status;
 select count(*) from t0 a, t0 b, t0 c
 where c.a in (select a from t1 d);
+--skip_if_hypergraph  # Depends on the query plan.
 show status like 'Created_tmp_disk_tables';
 
 drop table t0, t1;
@@ -921,6 +934,7 @@ explain select left(a1,7), left(a2,7)
 from t1_512
 where a1 in (select group_concat(b1) from t2_512 group by b2);
 
+--skip_if_hypergraph  # Differing warnings.
 select left(a1,7), left(a2,7)
 from t1_512
 where a1 in (select group_concat(b1) from t2_512 group by b2);
@@ -931,6 +945,7 @@ explain select left(a1,7), left(a2,7)
 from t1_512
 where a1 in (select group_concat(b1) from t2_512 group by b2);
 
+--skip_if_hypergraph  # Differing warnings.
 select left(a1,7), left(a2,7)
 from t1_512
 where a1 in (select group_concat(b1) from t2_512 group by b2);
@@ -1003,6 +1018,7 @@ explain select left(a1,7), left(a2,7)
 from t1_513
 where a1 in (select group_concat(b1) from t2_513 group by b2);
 
+--skip_if_hypergraph  # Differing warnings.
 select left(a1,7), left(a2,7)
 from t1_513
 where a1 in (select group_concat(b1) from t2_513 group by b2);
@@ -1075,6 +1091,7 @@ explain select left(a1,7), left(a2,7)
 from t1_1024
 where a1 in (select group_concat(b1) from t2_1024 group by b2);
 
+--skip_if_hypergraph  # Differing warnings.
 select left(a1,7), left(a2,7)
 from t1_1024
 where a1 in (select group_concat(b1) from t2_1024 group by b2);
@@ -1085,6 +1102,7 @@ explain select left(a1,7), left(a2,7)
 from t1_1024
 where a1 in (select group_concat(b1) from t2_1024 group by b2);
 
+--skip_if_hypergraph  # Differing warnings.
 select left(a1,7), left(a2,7)
 from t1_1024
 where a1 in (select group_concat(b1) from t2_1024 group by b2);
@@ -1157,6 +1175,7 @@ explain select left(a1,7), left(a2,7)
 from t1_1025
 where a1 in (select group_concat(b1) from t2_1025 group by b2);
 
+--skip_if_hypergraph  # Differing warnings.
 select left(a1,7), left(a2,7)
 from t1_1025
 where a1 in (select group_concat(b1) from t2_1025 group by b2);
@@ -1167,6 +1186,7 @@ explain select left(a1,7), left(a2,7)
 from t1_1025
 where a1 in (select group_concat(b1) from t2_1025 group by b2);
 
+--skip_if_hypergraph  # Differing warnings.
 select left(a1,7), left(a2,7)
 from t1_1025
 where a1 in (select group_concat(b1) from t2_1025 group by b2);
@@ -1412,6 +1432,7 @@ FROM ot1 LEFT JOIN ot2 ON ot1.a=ot2.a+0 AND
 # In subquery_sj_{all,firstmatch}_*, demonstrates how partially overlapping
 # outer joins and first matches are rejected by the join optimizer and cannot
 # exist (DBUG_ASSERTs in FindSubstructure verify it).
+--skip_if_hypergraph  # Depends on query plan.
 EXPLAIN FORMAT=tree SELECT *
 FROM ot1 LEFT JOIN ot2 ON ot1.a=ot2.a AND ot1.a IN (SELECT a FROM it3)
          LEFT JOIN ot3 ON ot2.a=ot3.a AND ot3.a IN (SELECT a FROM it3);
@@ -2231,6 +2252,7 @@ WHERE t1field IN (SELECT * FROM v2);
 
 --sorted_result
 EXECUTE stmt;
+--echo
 --sorted_result
 EXECUTE stmt;
 
@@ -2244,6 +2266,9 @@ WHERE t1field IN (SELECT * FROM v2)
 ";
 
 EXECUTE stmt;
+--echo
+--echo This line is only in place to help --skip_if_hypergraph diffing some more.
+--echo
 EXECUTE stmt;
 
 DROP TABLE t1, t2, t3;
@@ -2410,6 +2435,7 @@ WHERE t1field IN (SELECT v1field FROM v1);
 ";
 
 EXECUTE stmt;
+--echo
 EXECUTE stmt;
 
 DROP PROCEDURE p1;
@@ -2725,6 +2751,9 @@ WHERE EMPNUM IN
         FROM t2
         WHERE PTYPE = 'Design'))";
 EXECUTE stmt;
+--echo
+--echo This line is only in place to help --skip_if_hypergraph diffing some more.
+--echo
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
@@ -2751,6 +2780,9 @@ WHERE EMPNUM IN
         FROM t2
         WHERE PTYPE = 'Design'))";
 EXECUTE stmt;
+--echo
+--echo This line is only in place to help --skip_if_hypergraph diffing some more.
+--echo
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
@@ -2776,6 +2808,9 @@ WHERE EMPNUM IN
         FROM t2
         WHERE PTYPE = 'Design'))";
 EXECUTE stmt;
+--echo
+--echo This line is only in place to help --skip_if_hypergraph diffing some more.
+--echo
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
@@ -3812,6 +3847,7 @@ WHERE t1.id IN (
     )
   )';
 EXECUTE stmt;
+--echo
 EXECUTE stmt;
 
 PREPARE stmt FROM
@@ -3826,6 +3862,7 @@ WHERE t1.id IN (
     )
   )';
 EXECUTE stmt;
+--echo
 EXECUTE stmt;
 
 DROP TABLE t1,t2,t3;
@@ -3872,6 +3909,7 @@ WHERE country_id IN (SELECT vf_country_id FROM v1);
 --echo
 --sorted_result
 EXECUTE stmt;
+--echo
 --sorted_result
 EXECUTE stmt;
 
@@ -4013,6 +4051,7 @@ let $query=
 SELECT * FROM t1 WHERE t1.i IN (SELECT t2.i
                                 FROM t2 JOIN t3
                                 WHERE t2.i + t3.i = 5);
+--sorted_result
 eval $query;
 eval explain $query;
 
@@ -5670,6 +5709,7 @@ FROM t2 AS alias1
 ';
 
 EXECUTE stmt;
+--echo
 EXECUTE stmt;
 
 DEALLOCATE prepare stmt;
@@ -6026,6 +6066,7 @@ WHERE EXISTS
 ";
 
 EXECUTE stmt;
+--echo
 EXECUTE stmt;
 
 DEALLOCATE PREPARE stmt;
@@ -6368,6 +6409,7 @@ eval explain $query;
 eval PREPARE stmt FROM "$query";
 --sorted_result
 EXECUTE stmt;
+--echo
 --sorted_result
 EXECUTE stmt;
 
@@ -6992,6 +7034,7 @@ eval explain $query;
 # In subquery_sj_loosescan_bka_nobnl (ie., with loose scan), shows a case
 # where we can't use NestedLoopSemiJoinWithDuplicateRemovalIterator since we
 # have a table that is both firstmatch (semijoin) _and_ outer join.
+--skip_if_hypergraph  # Depends on query plan.
 eval explain format=tree $query;
 
 eval $query;
@@ -7095,10 +7138,12 @@ AND t2.uid=t1.fid;
 
 FLUSH STATUS;
 
+--sorted_result
 SELECT name FROM t2, t1
 WHERE t1.uid IN (SELECT t4.uid FROM t4, t3 WHERE t3.uid=1 AND t4.uid=t3.fid)
 AND t2.uid=t1.fid;
 
+--skip_if_hypergraph  # Depends on the query plan.
 SHOW STATUS LIKE '%handler_read%';
 
 DROP TABLE t1,t2,t3,t4;
@@ -7253,6 +7298,7 @@ INSERT INTO t1 VALUES ('08:35:24', 'X'), ('14:51:13', 'S'), ('11:22:33', 'Q');
 CREATE TABLE t2 ( pk INTEGER );
 INSERT INTO t2 VALUES (1), (2);
 ANALYZE TABLE t1, t2;
+--skip_if_hypergraph  # Depends on query plan.
 EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE EXISTS ( SELECT alias1.f2 FROM t2 LEFT JOIN t1 ON 1 LEFT JOIN t1 AS alias1 ON 1 );
 --sorted_result
 SELECT * FROM t1 WHERE EXISTS ( SELECT alias1.f2 FROM t2 LEFT JOIN t1 ON 1 LEFT JOIN t1 AS alias1 ON 1 );

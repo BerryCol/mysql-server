@@ -25,6 +25,7 @@
 #include "plugin/x/src/mysql_function_names.h"
 
 #include <algorithm>
+#include <iterator>
 #include <vector>
 
 #include "plugin/x/src/helper/string_case.h"
@@ -199,6 +200,7 @@ const char *const native_mysql_functions[] = {
     "ST_ENVELOPE",
     "ST_EQUALS",
     "ST_EXTERIORRING",
+    "ST_FRECHETDISTANCE",
     "ST_GEOHASH",
     "ST_GEOMCOLLFROMTEXT",
     "ST_GEOMCOLLFROMTXT",
@@ -212,6 +214,7 @@ const char *const native_mysql_functions[] = {
     "ST_GEOMFROMGEOJSON",
     "ST_GEOMFROMTEXT",
     "ST_GEOMFROMWKB",
+    "ST_HAUSDORFFDISTANCE",
     "ST_INTERIORRINGN",
     "ST_INTERSECTION",
     "ST_INTERSECTS",
@@ -381,7 +384,6 @@ const char *const other_mysql_functions[] = {
     "MULTIPOINT",
     "MULTIPOLYGON",
     "NTH_VALUE",
-    "NTILE",
     "PASSWORD",
     "PERCENT_RANK",
     "POINT",

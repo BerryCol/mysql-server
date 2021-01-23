@@ -178,7 +178,7 @@ create table t1 select round(1, 6);
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `round(1, 6)` int NOT NULL DEFAULT '0'
+  `round(1, 6)` bigint NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 select * from t1;
 round(1, 6)
@@ -360,28 +360,28 @@ round(1.12e1, 4294967296)	truncate(1.12e1, 4294967296)
 11.2	11.2
 select round(1.5, 2147483640), truncate(1.5, 2147483640);
 round(1.5, 2147483640)	truncate(1.5, 2147483640)
-1.500000000000000000000000000000	1.500000000000000000000000000000
+1.5	1.5
 select round(1.5, -2147483649), round(1.5, 2147483648);
 round(1.5, -2147483649)	round(1.5, 2147483648)
-0	1.500000000000000000000000000000
+0	1.5
 select truncate(1.5, -2147483649), truncate(1.5, 2147483648);
 truncate(1.5, -2147483649)	truncate(1.5, 2147483648)
-0	1.500000000000000000000000000000
+0	1.5
 select round(1.5, -4294967296), round(1.5, 4294967296);
 round(1.5, -4294967296)	round(1.5, 4294967296)
-0	1.500000000000000000000000000000
+0	1.5
 select truncate(1.5, -4294967296), truncate(1.5, 4294967296);
 truncate(1.5, -4294967296)	truncate(1.5, 4294967296)
-0	1.500000000000000000000000000000
+0	1.5
 select round(1.5, -9223372036854775808), round(1.5, 9223372036854775808);
 round(1.5, -9223372036854775808)	round(1.5, 9223372036854775808)
-0	1.500000000000000000000000000000
+0	1.5
 select truncate(1.5, -9223372036854775808), truncate(1.5, 9223372036854775808);
 truncate(1.5, -9223372036854775808)	truncate(1.5, 9223372036854775808)
-0	1.500000000000000000000000000000
+0	1.5
 select round(1.5, 18446744073709551615), truncate(1.5, 18446744073709551615);
 round(1.5, 18446744073709551615)	truncate(1.5, 18446744073709551615)
-1.500000000000000000000000000000	1.500000000000000000000000000000
+1.5	1.5
 select round(18446744073709551614, -1), truncate(18446744073709551614, -1);
 round(18446744073709551614, -1)	truncate(18446744073709551614, -1)
 18446744073709551610	18446744073709551610
@@ -465,10 +465,10 @@ a	ROUND(a)
 2.5	2
 -2.9	-3
 2.9	3
--1e16	-10000000000000000
-1e16	10000000000000000
--1.0000000000000002e16	-10000000000000002
-1.0000000000000002e16	10000000000000002
+-1e16	-1e16
+1e16	1e16
+-1.0000000000000002e16	-1.0000000000000002e16
+1.0000000000000002e16	1.0000000000000002e16
 DROP TABLE t1;
 CREATE TABLE t1(f1 LONGTEXT);
 INSERT INTO t1 VALUES ('a');
@@ -1949,3 +1949,89 @@ arg	i	round(arg, i)
 18446744073709551614	-20	0
 DROP PROCEDURE test_round;
 DROP PROCEDURE test_round_unsigned;
+# Bug#31128028 ROUND and TRUNCATE sometimes produce wrong result types
+CREATE TABLE t1(a INTEGER, b INTEGER);
+INSERT INTO t1 VALUES(11, -1);
+CREATE TABLE t2 AS SELECT a, ROUND(a, b) AS c FROM t1;
+DESCRIBE t2;
+Field	Type	Null	Key	Default	Extra
+a	int	YES		NULL	
+c	bigint	YES		NULL	
+DROP TABLE t1, t2;
+# Bug#29602947: The behavior between INSERT stmt and "PREPARE stmt and
+#               EXECUTE stmt" different
+CREATE TABLE t (a INTEGER);
+INSERT INTO t VALUES (1.0E+01+'a');
+ERROR 22007: Truncated incorrect DOUBLE value: 'a'
+PREPARE st1 FROM "INSERT INTO t VALUES (? + ?)";
+SET @a=1.0E+01;
+SET @b='a';
+EXECUTE st1 USING @a,@b;
+ERROR 22007: Truncated incorrect DOUBLE value: 'a'
+DROP TABLE t;
+#
+# Bug #19186271 MANY, MANY CLASSES OF STRING-TO-INTEGER CONVERSION BUG
+#
+SET sql_mode = '';
+CREATE TABLE t1 (i INT, iu INT UNSIGNED,
+b BIGINT, bu BIGINT UNSIGNED);
+DELETE FROM t1;
+INSERT INTO t1 (i,iu,b,bu)
+# The second '.' and anything after it should be ignored.
+VALUES ('1.2.3.4', '1.2.3.4', '1.2.3.4', '1.2.3.4');
+Warnings:
+Warning	1265	Data truncated for column 'i' at row 1
+Warning	1265	Data truncated for column 'iu' at row 1
+Warning	1265	Data truncated for column 'b' at row 1
+Warning	1265	Data truncated for column 'bu' at row 1
+SELECT i,iu,b,bu FROM t1;
+i	iu	b	bu
+1	1	1	1
+DELETE FROM t1;
+INSERT INTO t1 (b,bu) VALUES ('92233720368547758000e+', '92233720368547758000e+');
+Warnings:
+Warning	1264	Out of range value for column 'b' at row 1
+Warning	1264	Out of range value for column 'bu' at row 1
+SELECT b,bu FROM t1;
+b	bu
+9223372036854775807	18446744073709551615
+DELETE FROM t1;
+INSERT INTO t1 (b,bu) VALUES ('92233720368547758000', '92233720368547758000');
+Warnings:
+Warning	1264	Out of range value for column 'b' at row 1
+Warning	1264	Out of range value for column 'bu' at row 1
+SELECT b,bu FROM t1;
+b	bu
+9223372036854775807	18446744073709551615
+DELETE FROM t1;
+INSERT INTO t1 (i,b) VALUES ('0.9223372036854775807', '0.9223372036854775807');
+INSERT INTO t1 (i,b) VALUES ('0.9223372036854775808', '0.9223372036854775808');
+SELECT i,b FROM t1;
+i	b
+1	1
+1	1
+DELETE FROM t1;
+INSERT INTO t1 (iu,bu) VALUES ('-1e19', '-1e19');
+Warnings:
+Warning	1264	Out of range value for column 'iu' at row 1
+Warning	1264	Out of range value for column 'bu' at row 1
+INSERT INTO t1 (iu,bu) VALUES ('-2e19', '-2e19');
+Warnings:
+Warning	1264	Out of range value for column 'iu' at row 1
+Warning	1264	Out of range value for column 'bu' at row 1
+INSERT INTO t1 (iu,bu) VALUES ('-18446744073709551615','-18446744073709551615');
+Warnings:
+Warning	1264	Out of range value for column 'iu' at row 1
+Warning	1264	Out of range value for column 'bu' at row 1
+INSERT INTO t1 (iu,bu) VALUES ('-18446744073709551616','-18446744073709551616');
+Warnings:
+Warning	1264	Out of range value for column 'iu' at row 1
+Warning	1264	Out of range value for column 'bu' at row 1
+SELECT iu,bu FROM t1;
+iu	bu
+0	0
+0	0
+0	0
+0	0
+DROP TABLE t1;
+SET sql_mode = DEFAULT;

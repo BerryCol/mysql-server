@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2020, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1994, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -115,6 +115,14 @@ to memory). */
 the YieldProcessor macro defined in WinNT.h. It is a CPU architecture-
 independent way by using YieldProcessor. */
 #define UT_RELAX_CPU() YieldProcessor()
+#elif defined(__aarch64__)
+/* A "yield" instruction in aarch64 is essentially a nop, and does not cause
+enough delay to help backoff. "isb" is a barrier that, especially inside a
+loop, creates a small delay without consuming ALU resources.
+Experiments shown that adding the isb instruction improves stability and reduces
+result jitter. Adding more delay to the UT_RELAX_CPU than a single isb reduces
+performance. */
+#define UT_RELAX_CPU() __asm__ __volatile__("isb" ::: "memory")
 #else
 #define UT_RELAX_CPU() __asm__ __volatile__("" ::: "memory")
 #endif
@@ -313,9 +321,10 @@ database_name.table_name.
 @return pointer to 'formatted' */
 char *ut_format_name(const char *name, char *formatted, ulint formatted_size);
 
-/** Catenate files. */
-void ut_copy_file(FILE *dest, /*!< in: output file */
-                  FILE *src); /*!< in: input file to be appended to output */
+/** Catenate files.
+@param[in] dest Output file
+@param[in] src Input file to be appended to output */
+void ut_copy_file(FILE *dest, FILE *src);
 
 /** Convert byte value to string with unit
 @param[in]      data_bytes      byte value
@@ -647,7 +656,7 @@ class info : public logger {
       : logger(INFORMATION_LEVEL, err, std::forward<Args>(args)...) {}
 #else
   /** Destructor */
-  ~info();
+  ~info() override;
 #endif /* !UNIV_NO_ERR_MSGS */
 };
 
@@ -668,7 +677,7 @@ class warn : public logger {
 
 #else
   /** Destructor */
-  ~warn();
+  ~warn() override;
 #endif /* !UNIV_NO_ERR_MSGS */
 };
 
@@ -689,7 +698,7 @@ class error : public logger {
 
 #else
   /** Destructor */
-  ~error();
+  ~error() override;
 #endif /* !UNIV_NO_ERR_MSGS */
 };
 
@@ -710,10 +719,10 @@ class fatal : public logger {
       : logger(ERROR_LEVEL, err, std::forward<Args>(args)...) {}
 
   /** Destructor. */
-  virtual ~fatal();
+  ~fatal() override;
 #else
   /** Destructor. */
-  ~fatal();
+  ~fatal() override;
 #endif /* !UNIV_NO_ERR_MSGS */
 };
 
@@ -757,7 +766,7 @@ class fatal_or_error : public logger {
       : logger(ERROR_LEVEL, err, std::forward<Args>(args)...), m_fatal(fatal) {}
 
   /** Destructor */
-  virtual ~fatal_or_error();
+  ~fatal_or_error() override;
 #else
   /** Constructor */
   fatal_or_error(bool fatal) : m_fatal(fatal) {}
@@ -842,19 +851,19 @@ may be influenced by a change in system time, it might not be steady.
 So we use std::chrono::steady_clock for ellapsed time. */
 class Timer {
  public:
-  using MS = std::chrono::milliseconds;
   using SC = std::chrono::steady_clock;
 
  public:
   /** Constructor. Starts/resets the timer to the current time. */
-  Timer() { reset(); }
+  Timer() noexcept { reset(); }
 
   /** Reset the timer to the current time. */
   void reset() { m_start = SC::now(); }
 
   /** @return the time elapsed in milliseconds. */
-  int64_t elapsed() const {
-    return (std::chrono::duration_cast<MS>(SC::now() - m_start).count());
+  template <typename T = std::chrono::milliseconds>
+  int64_t elapsed() const noexcept {
+    return std::chrono::duration_cast<T>(SC::now() - m_start).count();
   }
 
   /** Print time elapsed since last reset (in milliseconds) to the stream.
@@ -863,8 +872,8 @@ class Timer {
   @return stream instance that was passed in. */
   template <typename T, typename Traits>
   friend std::basic_ostream<T, Traits> &operator<<(
-      std::basic_ostream<T, Traits> &out, const Timer &timer) {
-    return (out << timer.elapsed());
+      std::basic_ostream<T, Traits> &out, const Timer &timer) noexcept {
+    return out << timer.elapsed();
   }
 
  private:

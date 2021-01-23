@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2010, 2020, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -249,15 +249,26 @@ void PFS_user::rebase_memory_stats() {
   }
 }
 
-void PFS_user::carry_memory_stat_delta(PFS_memory_stat_delta *delta,
-                                       uint index) {
+void PFS_user::carry_memory_stat_alloc_delta(PFS_memory_stat_alloc_delta *delta,
+                                             uint index) {
   PFS_memory_shared_stat *event_name_array;
   PFS_memory_shared_stat *stat;
-  PFS_memory_stat_delta delta_buffer;
+  PFS_memory_stat_alloc_delta delta_buffer;
 
   event_name_array = write_instr_class_memory_stats();
   stat = &event_name_array[index];
-  (void)stat->apply_delta(delta, &delta_buffer);
+  (void)stat->apply_alloc_delta(delta, &delta_buffer);
+}
+
+void PFS_user::carry_memory_stat_free_delta(PFS_memory_stat_free_delta *delta,
+                                            uint index) {
+  PFS_memory_shared_stat *event_name_array;
+  PFS_memory_shared_stat *stat;
+  PFS_memory_stat_free_delta delta_buffer;
+
+  event_name_array = write_instr_class_memory_stats();
+  stat = &event_name_array[index];
+  (void)stat->apply_free_delta(delta, &delta_buffer);
 }
 
 PFS_user *sanitize_user(PFS_user *unsafe) {
@@ -290,7 +301,7 @@ class Proc_purge_user : public PFS_buffer_processor<PFS_user> {
  public:
   Proc_purge_user(PFS_thread *thread) : m_thread(thread) {}
 
-  virtual void operator()(PFS_user *pfs) {
+  void operator()(PFS_user *pfs) override {
     pfs->aggregate(true);
     if (pfs->get_refcount() == 0) {
       purge_user(m_thread, pfs);

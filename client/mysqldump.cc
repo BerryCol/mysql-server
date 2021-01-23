@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2000, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -57,6 +57,7 @@
 #include "mysqld_error.h"
 #include "prealloced_array.h"
 #include "print_version.h"
+#include "scope_guard.h"
 #include "template_utils.h"
 #include "typelib.h"
 #include "welcome_copyright_notice.h" /* ORACLE_WELCOME_COPYRIGHT_NOTICE */
@@ -191,8 +192,8 @@ wrappers, they will terminate the process if there is
 an allocation failure.
 */
 static void init_dynamic_string_checked(DYNAMIC_STRING *str,
-                                        const char *init_str, size_t init_alloc,
-                                        size_t alloc_increment);
+                                        const char *init_str,
+                                        size_t init_alloc);
 static void dynstr_append_checked(DYNAMIC_STRING *dest, const char *src);
 static void dynstr_set_checked(DYNAMIC_STRING *str, const char *init_str);
 static void dynstr_append_mem_checked(DYNAMIC_STRING *str, const char *append,
@@ -2581,18 +2582,21 @@ static inline bool is_innodb_stats_tables_included(int argc, char **argv) {
   be dumping.
 
   ARGS
-    table       - table name
-    db          - db name
-    table_type  - table type, e.g. "MyISAM" or "InnoDB", but also "VIEW"
-    ignore_flag - what we must particularly ignore - see IGNORE_ defines above
-    real_columns- Contains one byte per column, 0 means unused, 1 is used
-                  Generated columns are marked as unused
+    table        - table name
+    db           - db name
+    table_type   - table type, e.g. "MyISAM" or "InnoDB", but also "VIEW"
+    ignore_flag  - what we must particularly ignore - see IGNORE_ defines above
+    real_columns - Contains one byte per column, 0 means unused, 1 is used
+                   Generated columns are marked as unused
+    column_list  - Contains column list when table has invisible columns.
+
   RETURN
     number of fields in table, 0 if error
 */
 
 static uint get_table_structure(const char *table, char *db, char *table_type,
-                                char *ignore_flag, bool real_columns[]) {
+                                char *ignore_flag, bool real_columns[],
+                                std::string *column_list) {
   bool init = false, write_data, complete_insert, skip_ddl;
   uint64_t num_fields;
   const char *result_table, *opt_quoted_table;
@@ -2632,7 +2636,7 @@ static uint get_table_structure(const char *table, char *db, char *table_type,
     complete_insert = opt_complete_insert;
     if (!insert_pat_inited) {
       insert_pat_inited = true;
-      init_dynamic_string_checked(&insert_pat, "", 1024, 1024);
+      init_dynamic_string_checked(&insert_pat, "", 1024);
     } else
       dynstr_set_checked(&insert_pat, "");
   }
@@ -2831,17 +2835,43 @@ static uint get_table_structure(const char *table, char *db, char *table_type,
       return 0;
     }
 
-    if (write_data && !complete_insert) {
-      /*
-        If data contents of table are to be written and complete_insert
-        is false (column list not required in INSERT statement), scan the
-        column list for generated columns, as presence of any generated column
-        will require that an explicit list of columns is printed.
-      */
+    bool has_invisible_columns = false;
+    if (write_data) {
       while ((row = mysql_fetch_row(result))) {
         if (row[SHOW_EXTRA]) {
-          complete_insert |= strcmp(row[SHOW_EXTRA], "STORED GENERATED") == 0 ||
-                             strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED") == 0;
+          /*
+            If data contents of table are to be written and option to prepare
+            INSERT statement with complete column list is not set then scan the
+            column list for generated columns and invisible columns. Presence
+            of any generated column or invisible column will require that an
+            explicit list of columns is printed for INSERT statements.
+          */
+          bool is_generated_column = false;
+          if (strcmp(row[SHOW_EXTRA], "STORED GENERATED") == 0) {
+            is_generated_column = true;
+          } else if (strcmp(row[SHOW_EXTRA], "STORED GENERATED INVISIBLE") ==
+                     0) {
+            is_generated_column = true;
+            has_invisible_columns |= true;
+          } else if (strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED") == 0) {
+            is_generated_column = true;
+          } else if (strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED INVISIBLE") ==
+                     0) {
+            is_generated_column = true;
+            has_invisible_columns |= true;
+          } else if (!has_invisible_columns &&
+                     (strstr(row[SHOW_EXTRA], "INVISIBLE") != nullptr)) {
+            /*
+              For timestamp and datetime type columns, EXTRA column might
+              contain DEFAULT_GENERATED and 'on update CURRENT TIMESTAMP'.
+              INVISIBLE keyword is appended at the end if column is invisible.
+              So finding INVISIBLE keyword in EXTRA column to check column is
+              invisible.
+            */
+            has_invisible_columns = true;
+          }
+
+          complete_insert |= (has_invisible_columns || is_generated_column);
         }
       }
       mysql_free_result(result);
@@ -2877,15 +2907,20 @@ static uint get_table_structure(const char *table, char *db, char *table_type,
     while ((row = mysql_fetch_row(result))) {
       if (row[SHOW_EXTRA]) {
         real_columns[colno] =
-            strcmp(row[SHOW_EXTRA], "STORED GENERATED") != 0 &&
-            strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED") != 0;
+            (strcmp(row[SHOW_EXTRA], "STORED GENERATED") != 0 &&
+             strcmp(row[SHOW_EXTRA], "STORED GENERATED INVISIBLE") != 0 &&
+             strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED") != 0 &&
+             strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED INVISIBLE") != 0);
       } else
         real_columns[colno] = true;
 
+      if (has_invisible_columns && column_list != nullptr) {
+        if (!column_list->empty()) column_list->append(", ");
+        column_list->append(quote_name(row[SHOW_FIELDNAME], name_buff, false));
+      }
+
       if (real_columns[colno++] && complete_insert) {
-        if (init) {
-          dynstr_append_checked(&insert_pat, ", ");
-        }
+        if (init) dynstr_append_checked(&insert_pat, ", ");
         init = true;
         dynstr_append_checked(
             &insert_pat, quote_name(row[SHOW_FIELDNAME], name_buff, false));
@@ -2901,17 +2936,43 @@ static uint get_table_structure(const char *table, char *db, char *table_type,
 
     if (mysql_query_with_error_report(mysql, &result, query_buff)) return 0;
 
-    if (write_data && !complete_insert) {
-      /*
-        If data contents of table are to be written and complete_insert
-        is false (column list not required in INSERT statement), scan the
-        column list for generated columns, as presence of any generated column
-        will require that an explicit list of columns is printed.
-      */
+    bool has_invisible_columns = false;
+    if (write_data) {
       while ((row = mysql_fetch_row(result))) {
         if (row[SHOW_EXTRA]) {
-          complete_insert |= strcmp(row[SHOW_EXTRA], "STORED GENERATED") == 0 ||
-                             strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED") == 0;
+          /*
+            If data contents of table are to be written and option to prepare
+            INSERT statement with complete column list is not set then scan the
+            column list for generated columns and invisible columns. Presence
+            of any generated column or invisible column will require that an
+            explicit list of columns is printed for INSERT statements.
+          */
+          bool is_generated_column = false;
+          if (strcmp(row[SHOW_EXTRA], "STORED GENERATED") == 0) {
+            is_generated_column = true;
+          } else if (strcmp(row[SHOW_EXTRA], "STORED GENERATED INVISIBLE") ==
+                     0) {
+            is_generated_column = true;
+            has_invisible_columns |= true;
+          } else if (strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED") == 0) {
+            is_generated_column = true;
+          } else if (strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED INVISIBLE") ==
+                     0) {
+            is_generated_column = true;
+            has_invisible_columns |= true;
+          } else if (!has_invisible_columns &&
+                     (strstr(row[SHOW_EXTRA], "INVISIBLE") != nullptr)) {
+            /*
+              For timestamp and datetime type columns, EXTRA column might
+              contain DEFAULT_GENERATED and 'on update CURRENT TIMESTAMP'.
+              INVISIBLE keyword is appended at the end if column is invisible.
+              So finding INVISIBLE keyword in EXTRA column to check column is
+              invisible.
+            */
+            has_invisible_columns = true;
+          }
+
+          complete_insert |= (has_invisible_columns || is_generated_column);
         }
       }
       mysql_free_result(result);
@@ -2966,10 +3027,17 @@ static uint get_table_structure(const char *table, char *db, char *table_type,
 
       if (row[SHOW_EXTRA]) {
         real_columns[colno] =
-            strcmp(row[SHOW_EXTRA], "STORED GENERATED") != 0 &&
-            strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED") != 0;
+            (strcmp(row[SHOW_EXTRA], "STORED GENERATED") != 0 &&
+             strcmp(row[SHOW_EXTRA], "STORED GENERATED INVISIBLE") != 0 &&
+             strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED") != 0 &&
+             strcmp(row[SHOW_EXTRA], "VIRTUAL GENERATED INVISIBLE") != 0);
       } else
         real_columns[colno] = true;
+
+      if (has_invisible_columns && column_list != nullptr) {
+        if (!column_list->empty()) column_list->append(", ");
+        column_list->append(quote_name(row[SHOW_FIELDNAME], name_buff, false));
+      }
 
       if (!real_columns[colno++]) continue;
 
@@ -3540,8 +3608,9 @@ static void dump_table(char *table, char *db) {
     Make sure you get the create table info before the following check for
     --no-data flag below. Otherwise, the create table info won't be printed.
   */
-  num_fields =
-      get_table_structure(table, db, table_type, &ignore_flag, real_columns);
+  std::string column_list;
+  num_fields = get_table_structure(table, db, table_type, &ignore_flag,
+                                   real_columns, &column_list);
 
   /*
     The "table" could be a view.  If so, we don't do anything here.
@@ -3585,9 +3654,8 @@ static void dump_table(char *table, char *db) {
 
   verbose_msg("-- Sending SELECT query...\n");
 
-  init_dynamic_string_checked(&query_string, "", 1024, 1024);
-  if (extended_insert)
-    init_dynamic_string_checked(&extended_row, "", 1024, 1024);
+  init_dynamic_string_checked(&query_string, "", 1024);
+  if (extended_insert) init_dynamic_string_checked(&extended_row, "", 1024);
 
   if (opt_order_by_primary) order_by = primary_key_fields(result_table);
   if (path) {
@@ -3610,8 +3678,12 @@ static void dump_table(char *table, char *db) {
 
     /* now build the query string */
 
-    dynstr_append_checked(&query_string,
-                          "SELECT /*!40001 SQL_NO_CACHE */ * INTO OUTFILE '");
+    dynstr_append_checked(&query_string, "SELECT /*!40001 SQL_NO_CACHE */ ");
+    if (column_list.empty())
+      dynstr_append_checked(&query_string, "*");
+    else
+      dynstr_append_checked(&query_string, column_list.c_str());
+    dynstr_append_checked(&query_string, " INTO OUTFILE '");
     dynstr_append_checked(&query_string, filename);
     dynstr_append_checked(&query_string, "'");
 
@@ -3660,8 +3732,12 @@ static void dump_table(char *table, char *db) {
                   "\n--\n-- Dumping data for table %s\n--\n", data_text);
     if (data_freemem) my_free(const_cast<char *>(data_text));
 
-    dynstr_append_checked(&query_string,
-                          "SELECT /*!40001 SQL_NO_CACHE */ * FROM ");
+    dynstr_append_checked(&query_string, "SELECT /*!40001 SQL_NO_CACHE */ ");
+    if (column_list.empty())
+      dynstr_append_checked(&query_string, "*");
+    else
+      dynstr_append_checked(&query_string, column_list.c_str());
+    dynstr_append_checked(&query_string, " FROM ");
     dynstr_append_checked(&query_string, result_table);
 
     if (where) {
@@ -4019,7 +4095,7 @@ static int dump_tablespaces_for_tables(char *db, char **table_names,
                               " INFORMATION_SCHEMA.PARTITIONS"
                               " WHERE"
                               " TABLE_SCHEMA='",
-                              256, 1024);
+                              256);
   dynstr_append_checked(&where, name_buff);
   dynstr_append_checked(&where, "' AND TABLE_NAME IN (");
 
@@ -4051,7 +4127,7 @@ static int dump_tablespaces_for_databases(char **databases) {
                               " INFORMATION_SCHEMA.PARTITIONS"
                               " WHERE"
                               " TABLE_SCHEMA IN (",
-                              256, 1024);
+                              256);
 
   for (i = 0; databases[i] != nullptr; i++) {
     char db_name_buff[NAME_LEN * 2 + 3];
@@ -4095,7 +4171,7 @@ static int dump_tablespaces(char *ts_where) {
                               " WHERE FILE_TYPE = 'UNDO LOG'"
                               " AND FILE_NAME IS NOT NULL"
                               " AND LOGFILE_GROUP_NAME IS NOT NULL",
-                              256, 1024);
+                              256);
   if (ts_where) {
     dynstr_append_checked(&sqlbuf,
                           " AND LOGFILE_GROUP_NAME IN ("
@@ -4172,7 +4248,7 @@ static int dump_tablespaces(char *ts_where) {
                               " ENGINE"
                               " FROM INFORMATION_SCHEMA.FILES"
                               " WHERE FILE_TYPE = 'DATAFILE'",
-                              256, 1024);
+                              256);
 
   if (ts_where) dynstr_append_checked(&sqlbuf, ts_where);
 
@@ -4257,8 +4333,18 @@ static int dump_all_databases() {
   MYSQL_RES *tableres;
   int result = 0;
 
+  my_ulonglong total_databases = 0;
+  char **database_list;
+  uint db_cnt = 0, cnt = 0;
+  uint mysql_db_found = 0;
+
   if (mysql_query_with_error_report(mysql, &tableres, "SHOW DATABASES"))
     return 1;
+
+  total_databases = mysql_num_rows(tableres);
+  database_list = (char **)my_malloc(
+      PSI_NOT_INSTRUMENTED, (sizeof(char *) * total_databases), MYF(MY_WME));
+
   while ((row = mysql_fetch_row(tableres))) {
     if (mysql_get_server_version(mysql) >= FIRST_INFORMATION_SCHEMA_VERSION &&
         !my_strcasecmp(&my_charset_latin1, row[0], INFORMATION_SCHEMA_DB_NAME))
@@ -4273,9 +4359,30 @@ static int dump_all_databases() {
       continue;
 
     if (is_ndbinfo(mysql, row[0])) continue;
-
-    if (dump_all_tables_in_db(row[0])) result = 1;
+    if (mysql_db_found || (!my_strcasecmp(charset_info, row[0], "mysql"))) {
+      if (dump_all_tables_in_db(row[0])) result = 1;
+      mysql_db_found = 1;
+      /*
+        once mysql database is found dump all dbs saved as part
+        of database_list
+      */
+      for (; cnt < db_cnt; cnt++) {
+        if (dump_all_tables_in_db(database_list[cnt])) result = 1;
+        my_free(database_list[cnt]);
+      }
+    } else {
+      /*
+        till mysql database is not found save database names to
+        database_list
+      */
+      database_list[db_cnt] =
+          my_strdup(PSI_NOT_INSTRUMENTED, row[0], MYF(MY_WME | MY_ZEROFILL));
+      db_cnt++;
+    }
   }
+  DBUG_ASSERT(mysql_db_found);
+  memset(database_list, 0, sizeof(*database_list));
+  my_free(database_list);
   mysql_free_result(tableres);
   if (seen_views) {
     if (mysql_query(mysql, "SHOW DATABASES") ||
@@ -4449,7 +4556,7 @@ static int dump_all_tables_in_db(char *database) {
 
   if (lock_tables) {
     DYNAMIC_STRING query;
-    init_dynamic_string_checked(&query, "LOCK TABLES ", 256, 1024);
+    init_dynamic_string_checked(&query, "LOCK TABLES ", 256);
     for (numrows = 0; (table = getTableName(1));) {
       char *end = my_stpcpy(afterdot, table);
       if (include_table(hash_key, end - hash_key)) {
@@ -4555,14 +4662,14 @@ static int dump_all_tables_in_db(char *database) {
     char ignore_flag;
     if (general_log_table_exists) {
       if (!get_table_structure("general_log", database, table_type,
-                               &ignore_flag, real_columns))
+                               &ignore_flag, real_columns, nullptr))
         verbose_msg(
             "-- Warning: get_table_structure() failed with some internal "
             "error for 'general_log' table\n");
     }
     if (slow_log_table_exists) {
       if (!get_table_structure("slow_log", database, table_type, &ignore_flag,
-                               real_columns))
+                               real_columns, nullptr))
         verbose_msg(
             "-- Warning: get_table_structure() failed with some internal "
             "error for 'slow_log' table\n");
@@ -4603,7 +4710,7 @@ static bool dump_all_views_in_db(char *database) {
                   NullS);
   if (lock_tables) {
     DYNAMIC_STRING query;
-    init_dynamic_string_checked(&query, "LOCK TABLES ", 256, 1024);
+    init_dynamic_string_checked(&query, "LOCK TABLES ", 256);
     for (numrows = 0; (table = getTableName(1));) {
       char *end = my_stpcpy(afterdot, table);
       if (include_table(hash_key, end - hash_key)) {
@@ -4699,7 +4806,7 @@ static int dump_selected_tables(char *db, char **table_names, int tables) {
   if (!(dump_tables = pos = (char **)root.Alloc(tables * sizeof(char *))))
     die(EX_EOM, "alloc_root failure.");
 
-  init_dynamic_string_checked(&lock_tables_query, "LOCK TABLES ", 256, 1024);
+  init_dynamic_string_checked(&lock_tables_query, "LOCK TABLES ", 256);
   for (; tables > 0; tables--, table_names++) {
     /* the table name passed on commandline may be wrong case */
     if ((*pos = get_actual_table_name(*table_names, &root))) {
@@ -5017,7 +5124,7 @@ static int get_bin_log_name(MYSQL *mysql_con, char *buff_log_name,
 static int purge_bin_logs_to(MYSQL *mysql_con, char *log_name) {
   DYNAMIC_STRING str;
   int err;
-  init_dynamic_string_checked(&str, "PURGE BINARY LOGS TO '", 1024, 1024);
+  init_dynamic_string_checked(&str, "PURGE BINARY LOGS TO '", 1024);
   dynstr_append_checked(&str, log_name);
   dynstr_append_checked(&str, "'");
   err = mysql_query_with_error_report(mysql_con, nullptr, str.str);
@@ -5279,7 +5386,7 @@ static int replace(DYNAMIC_STRING *ds_str, const char *search_str,
   DYNAMIC_STRING ds_tmp;
   const char *start = strstr(ds_str->str, search_str);
   if (!start) return 1;
-  init_dynamic_string_checked(&ds_tmp, "", ds_str->length + replace_len, 256);
+  init_dynamic_string_checked(&ds_tmp, "", ds_str->length + replace_len);
   dynstr_append_mem_checked(&ds_tmp, ds_str->str, start - ds_str->str);
   dynstr_append_mem_checked(&ds_tmp, replace_str, replace_len);
   dynstr_append_checked(&ds_tmp, start + search_len);
@@ -5538,7 +5645,7 @@ static bool get_view_structure(char *table, char *db) {
     /* Save the result of SHOW CREATE TABLE in ds_view */
     row = mysql_fetch_row(table_res);
     lengths = mysql_fetch_lengths(table_res);
-    init_dynamic_string_checked(&ds_view, row[1], lengths[1] + 1, 1024);
+    init_dynamic_string_checked(&ds_view, row[1], lengths[1] + 1);
     mysql_free_result(table_res);
 
     /* Get the result from "select ... information_schema" */
@@ -5642,9 +5749,9 @@ static bool get_view_structure(char *table, char *db) {
 #define DYNAMIC_STR_ERROR_MSG "Couldn't perform DYNAMIC_STRING operation"
 
 static void init_dynamic_string_checked(DYNAMIC_STRING *str,
-                                        const char *init_str, size_t init_alloc,
-                                        size_t alloc_increment) {
-  if (init_dynamic_string(str, init_str, init_alloc, alloc_increment))
+                                        const char *init_str,
+                                        size_t init_alloc) {
+  if (init_dynamic_string(str, init_str, init_alloc))
     die(EX_MYSQLERR, DYNAMIC_STR_ERROR_MSG);
 }
 

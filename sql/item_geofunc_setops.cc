@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2014, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -42,7 +42,7 @@
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "my_sys.h"
-#include "mysql/psi/psi_base.h"
+#include "mysql/components/services/bits/psi_bits.h"
 #include "mysqld_error.h"
 #include "sql/current_thd.h"
 #include "sql/dd/cache/dictionary_client.h"
@@ -2548,8 +2548,8 @@ class Singleton_extractor : public WKB_scanner_event_handler {
     return nsubtrees == 1 ? bg_type : gtype;
   }
 
-  virtual void on_wkb_start(Geometry::wkbByteOrder, Geometry::wkbType geotype,
-                            const void *wkb, uint32 len, bool) {
+  void on_wkb_start(Geometry::wkbByteOrder, Geometry::wkbType geotype,
+                    const void *wkb, uint32 len, bool) override {
     if (geotype != Geometry::wkb_geometrycollection) {
       if (gc_depth == 0) {
         gc_depth = depth;
@@ -2572,7 +2572,7 @@ class Singleton_extractor : public WKB_scanner_event_handler {
     depth++;
   }
 
-  virtual void on_wkb_end(const void *wkb) {
+  void on_wkb_end(const void *wkb) override {
     depth--;
     DBUG_ASSERT(depth >= 0);
 

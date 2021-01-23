@@ -2,12 +2,12 @@
 .\"     Title: \fBndb_restore\fR
 .\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 06/01/2020
+.\"      Date: 11/26/2020
 .\"    Manual: MySQL Database System
 .\"    Source: MySQL 8.0
 .\"  Language: English
 .\"
-.TH "\FBNDB_RESTORE\FR" "1" "06/01/2020" "MySQL 8\&.0" "MySQL Database System"
+.TH "\FBNDB_RESTORE\FR" "1" "11/26/2020" "MySQL 8\&.0" "MySQL Database System"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -61,7 +61,7 @@ when it finishes its run\&. Applications depending on this behavior should be mo
 must be executed once for each of the backup files that were created by the
 START BACKUP
 command used to create the backup (see
-Section\ \&22.5.3.2, \(lqUsing The NDB Cluster Management Client to Create a Backup\(rq)\&. This is equal to the number of data nodes in the cluster at the time that the backup was created\&.
+Section\ \&23.5.8.2, \(lqUsing The NDB Cluster Management Client to Create a Backup\(rq)\&. This is equal to the number of data nodes in the cluster at the time that the backup was created\&.
 .if n \{\
 .sp
 .\}
@@ -77,7 +77,7 @@ Section\ \&22.5.3.2, \(lqUsing The NDB Cluster Management Client to Create a Bac
 .PP
 Before using
 \fBndb_restore\fR, it is recommended that the cluster be running in single user mode, unless you are restoring multiple data nodes in parallel\&. See
-Section\ \&22.5.8, \(lqNDB Cluster Single User Mode\(rq, for more information\&.
+Section\ \&23.5.6, \(lqNDB Cluster Single User Mode\(rq, for more information\&.
 .sp .5v
 .RE
 .PP
@@ -90,7 +90,7 @@ Options Common to NDB Cluster Programs(1)\&.
 .nr an-no-space-flag 1
 .nr an-break-flag 1
 .br
-.B Table\ \&22.268.\ \&Command\-line options for the ndb_restore program
+.B Table\ \&23.39.\ \&Command\-line options for the ndb_restore program
 .TS
 allbox tab(:);
 lB lB lB.
@@ -102,56 +102,58 @@ T}:T{
 Added, Deprecated, or Removed
 T}
 .T&
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l
-l l l.
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l
+lB l l.
 T{
 .PP
 \fB \fR\fB--allow-pk-changes[=0|1]\fR\fB \fR
@@ -165,10 +167,20 @@ T{
 .PP
 \fB \fR\fB--append\fR\fB \fR
 T}:T{
-Append data to a tab-delimited file
+Append data to tab-delimited file
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
+T}
+T{
+.PP
+\fB \fR\fB--backup-password=string\fR\fB \fR
+T}:T{
+Supply a password for decrypting an encrypted backup with --decrypt; see
+              documentation for allowed values
+T}:T{
+.PP
+ADDED: NDB 8.0.22
 T}
 T{
 .PP
@@ -185,7 +197,7 @@ T{
 .PP
 \fB \fR\fB-b\fR\fB \fR
 T}:T{
-Restore from the backup with the given ID
+Restore from backup having this ID
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -203,9 +215,18 @@ T}:T{
 T}
 T{
 .PP
+\fB \fR\fB--decrypt\fR\fB \fR
+T}:T{
+Decrypt an encrypted backup; requires --backup-password
+T}:T{
+.PP
+ADDED: NDB 8.0.22
+T}
+T{
+.PP
 \fB \fR\fB--disable-indexes\fR\fB \fR
 T}:T{
-Causes indexes from a backup to be ignored; may decrease time needed to
+Causes indexes from backup to be ignored; may decrease time needed to
               restore data
 T}:T{
 .PP
@@ -217,7 +238,7 @@ T{
 .PP
 \fB \fR\fB-f\fR\fB \fR
 T}:T{
-Do not ignore system table during restore. Experimental only; not for
+Do not ignore system table during restore; experimental only; not for
               production use
 T}:T{
 .PP
@@ -236,9 +257,9 @@ T{
 .PP
 \fB \fR\fB--exclude-intermediate-sql-tables[=TRUE|FALSE]\fR\fB \fR
 T}:T{
-If TRUE (the default), do not restore any intermediate tables (having
-              names prefixed with '#sql-') that were left over from
-              copying ALTER TABLE operations
+If TRUE (default), do not restore any intermediate tables (having names
+              prefixed with '#sql-') that were left over from copying
+              ALTER TABLE operations
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -247,8 +268,8 @@ T{
 .PP
 \fB \fR\fB--exclude-missing-columns\fR\fB \fR
 T}:T{
-Causes columns from the backup version of a table that are missing from
-              the version of the table in the database to be ignored
+Causes columns from backup version of table that are missing from
+              version of table in database to be ignored
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -257,8 +278,7 @@ T{
 .PP
 \fB \fR\fB--exclude-missing-tables\fR\fB \fR
 T}:T{
-Causes tables from the backup that are missing from the database to be
-              ignored
+Causes tables from backup that are missing from database to be ignored
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -267,9 +287,9 @@ T{
 .PP
 \fB \fR\fB--exclude-tables=table-list\fR\fB \fR
 T}:T{
-List of one or more tables to exclude (includes those in the same
-              database that are not named); each table reference must
-              include the database name
+List of one or more tables to exclude (includes those in same database
+              that are not named); each table reference must include
+              database name
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -278,7 +298,7 @@ T{
 .PP
 \fB \fR\fB--fields-enclosed-by=char\fR\fB \fR
 T}:T{
-Fields are enclosed with the indicated character
+Fields are enclosed by this character
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -287,7 +307,7 @@ T{
 .PP
 \fB \fR\fB--fields-optionally-enclosed-by\fR\fB \fR
 T}:T{
-Fields are optionally enclosed with the indicated character
+Fields are optionally enclosed by this character
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -296,7 +316,7 @@ T{
 .PP
 \fB \fR\fB--fields-terminated-by=char\fR\fB \fR
 T}:T{
-Fields are terminated by the indicated character
+Fields are terminated by this character
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -343,7 +363,7 @@ T{
 \fB \fR\fB--include-tables=table-list\fR\fB \fR
 T}:T{
 List of one or more tables to restore (excludes those in same database
-              that are not named); each table reference must include the
+              that are not named); each table reference must include
               database name
 T}:T{
 .PP
@@ -353,7 +373,7 @@ T{
 .PP
 \fB \fR\fB--lines-terminated-by=char\fR\fB \fR
 T}:T{
-Lines are terminated by the indicated character
+Lines are terminated by this character
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -374,8 +394,8 @@ T{
 .PP
 \fB \fR\fB--no-binlog\fR\fB \fR
 T}:T{
-If a mysqld is connected and using binary logging, do not log the
-              restored data
+If mysqld is connected and using binary logging, do not log restored
+              data
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -409,7 +429,7 @@ T{
 .PP
 \fB \fR\fB-z\fR\fB \fR
 T}:T{
-Nodegroup map for NDBCLUSTER storage engine. Syntax: list of
+Nodegroup map for NDBCLUSTER storage engine; syntax: list of
               (source_nodegroup, destination_nodegroup)
 T}:T{
 .PP
@@ -462,7 +482,7 @@ T{
 .PP
 \fB \fR\fB--print\fR\fB \fR
 T}:T{
-Print metadata, data and log to stdout (equivalent to --print-meta
+Print metadata, data, and log to stdout (equivalent to --print-meta
               --print-data --print-log)
 T}:T{
 .PP
@@ -481,7 +501,7 @@ T{
 .PP
 \fB \fR\fB--print-log\fR\fB \fR
 T}:T{
-Print to stdout
+Print log to stdout
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -508,7 +528,7 @@ T{
 .PP
 \fB \fR\fB--progress-frequency=#\fR\fB \fR
 T}:T{
-Print status of restoration each given number of seconds
+Print status of restore each given number of seconds
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -528,9 +548,9 @@ T{
 .PP
 \fB \fR\fB--rebuild-indexes\fR\fB \fR
 T}:T{
-Causes multithreaded rebuilding of ordered indexes found in the backup.
-              Number of threads used is determined by setting
-              BuildIndexThreads parameter
+Causes multithreaded rebuilding of ordered indexes found in backup;
+              number of threads used is determined by setting
+              BuildIndexThreads
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -551,7 +571,7 @@ T{
 .PP
 \fB \fR\fB-r\fR\fB \fR
 T}:T{
-Restore table data and logs into NDB Cluster using the NDB API
+Restore table data and logs into NDB Cluster using NDB API
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -562,9 +582,9 @@ T{
 .PP
 \fB \fR\fB-e\fR\fB \fR
 T}:T{
-Restore epoch info into the status table. Convenient on a MySQL Cluster
-              replication slave for starting replication. The row in
-              mysql.ndb_apply_status with id 0 will be updated/inserted
+Restore epoch info into status table; useful on replica cluster for
+              starting replication; updates or inserts row in
+              mysql.ndb_apply_status with ID 0
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -575,7 +595,7 @@ T{
 .PP
 \fB \fR\fB-m\fR\fB \fR
 T}:T{
-Restore metadata to NDB Cluster using the NDB API
+Restore metadata to NDB Cluster using NDB API
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -593,7 +613,7 @@ T{
 .PP
 \fB \fR\fB--rewrite-database=olddb,newdb\fR\fB \fR
 T}:T{
-Restores to a database with a different name than the original
+Restore to differently named database
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -602,7 +622,7 @@ T{
 .PP
 \fB \fR\fB--skip-broken-objects\fR\fB \fR
 T}:T{
-Causes missing blob tables in the backup file to be ignored
+Ignore missing blob tables in backup file
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -613,7 +633,7 @@ T{
 .PP
 \fB \fR\fB-s\fR\fB \fR
 T}:T{
-Skip table structure check during restoring of data
+Skip table structure check during restore
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -623,8 +643,8 @@ T{
 \fB \fR\fB--skip-unknown-objects\fR\fB \fR
 T}:T{
 Causes schema objects not recognized by ndb_restore to be ignored when
-              restoring a backup made from a newer MySQL Cluster version
-              to an older version
+              restoring backup made from newer NDB version to older
+              version
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -644,7 +664,7 @@ T{
 .PP
 \fB \fR\fB-T dir_name\fR\fB \fR
 T}:T{
-Creates a tab-separated .txt file for each table in the given path
+Creates a tab-separated .txt file for each table in path provided
 T}:T{
 .PP
 (Supported in all MySQL 8.0 based releases)
@@ -698,7 +718,7 @@ The
 option is used to specify a connection string which tells
 ndb_restore
 where to locate the cluster management server (see
-Section\ \&22.3.3.3, \(lqNDB Cluster Connection Strings\(rq)\&. If this option is not used, then
+Section\ \&23.3.3.3, \(lqNDB Cluster Connection Strings\(rq)\&. If this option is not used, then
 \fBndb_restore\fR
 attempts to connect to a management server on
 localhost:1186\&. This utility acts as a cluster API node, and so requires a free connection
@@ -716,12 +736,21 @@ or
 section in
 config\&.ini
 that is not being used for a MySQL server or other application for this reason (see
-Section\ \&22.3.3.7, \(lqDefining SQL and Other API Nodes in an NDB Cluster\(rq)\&.
+Section\ \&23.3.3.7, \(lqDefining SQL and Other API Nodes in an NDB Cluster\(rq)\&.
+.PP
+In NDB 8\&.0\&.22 and later,
+\fBndb_restore\fR
+can decrypt an encrypted backup using
+\fB\-\-decrypt\fR
+and
+\fB\-\-backup\-password\fR\&. Both options must be specified to perform decryption\&. See the documentation for the
+START BACKUP
+management client command for information on creating encrypted backups\&.
 .PP
 You can verify that
 \fBndb_restore\fR
 is connected to the cluster by using the
-\fBSHOW\fR
+SHOW
 command in the
 \fBndb_mgm\fR
 management client\&. You can also accomplish this from a system shell, as shown here:
@@ -751,13 +780,6 @@ can be found in the following list:
 \fB\-\-allow\-pk\-changes\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -964,13 +986,6 @@ at the end of the restore process causes this index to be dropped\&.)
 \fB\-\-append\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -997,13 +1012,6 @@ options, this causes the data to be appended to any existing files having the sa
 \fB\-\-backup\-path\fR=\fIdir_name\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1064,9 +1072,9 @@ It is not possible to restore a backup made from a newer version of NDB Cluster 
 \fBndb_restore\fR
 from the newer NDB Cluster version to do so\&.
 .sp
-For example, to restore a cluster backup taken from a cluster running NDB Cluster 7\&.5\&.19 to a cluster running NDB Cluster 7\&.4\&.29, you must use the
+For example, to restore a cluster backup taken from a cluster running NDB Cluster 7\&.5\&.20 to a cluster running NDB Cluster 7\&.4\&.30, you must use the
 \fBndb_restore\fR
-that comes with the NDB Cluster 7\&.5\&.19 distribution\&.
+that comes with the NDB Cluster 7\&.5\&.20 distribution\&.
 .sp .5v
 .RE
 For more rapid restoration, the data may be restored in parallel, provided that there is a sufficient number of cluster connections available\&. That is, when restoring to multiple nodes in parallel, you must have an
@@ -1088,17 +1096,61 @@ process\&. However, the data files must always be applied before the logs\&.
 .sp -1
 .IP \(bu 2.3
 .\}
+\fB\-\-backup\-password=\fR\fB\fIpassword\fR\fR
+.TS
+allbox tab(:);
+lB l
+lB l
+lB l
+lB l.
+T{
+Command-Line Format
+T}:T{
+--backup-password=string
+T}
+T{
+Introduced
+T}:T{
+8.0.22-ndb-8.0.22
+T}
+T{
+Type
+T}:T{
+String
+T}
+T{
+Default Value
+T}:T{
+[none]
+T}
+.TE
+.sp 1
+This option specifies a password to be used when decrypting an encrypted backup with the
+\fB\-\-decrypt\fR
+option\&. This must be the same password that was used to encrypt the backup\&.
+.sp
+The password can be up to 256 characters in length, and must be enclosed by single or double quotation marks\&. It can contain any of the ASCII characters having character codes 32, 35, 38, 40\-91, 93, 95, and 97\-126; in other words, it can use any printable ASCII characters except for
+!,
+\*(Aq,
+",
+$,
+%,
+\e, and
+^\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
 \fB\-\-backupid\fR=\fI#\fR,
 \fB\-b\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1122,7 +1174,7 @@ T}
 This option is used to specify the ID or sequence number of the backup, and is the same number shown by the management client in the
 Backup \fIbackup_id\fR completed
 message displayed upon completion of a backup\&. (See
-Section\ \&22.5.3.2, \(lqUsing The NDB Cluster Management Client to Create a Backup\(rq\&.)
+Section\ \&23.5.8.2, \(lqUsing The NDB Cluster Management Client to Create a Backup\(rq\&.)
 .if n \{\
 .sp
 .\}
@@ -1135,7 +1187,7 @@ Section\ \&22.5.3.2, \(lqUsing The NDB Cluster Management Client to Create a Bac
 \fBImportant\fR
 .ps -1
 .br
-When restoring cluster backups, you must be sure to restore all data nodes from backups having the same backup ID\&. Using files from different backups will at best result in restoring the cluster to an inconsistent state, and may fail altogether\&.
+When restoring cluster backups, you must be sure to restore all data nodes from backups having the same backup ID\&. Using files from different backups results at best in restoring the cluster to an inconsistent state, and is likely to fail altogether\&.
 .sp .5v
 .RE
 In NDB 8\&.0\&.15 and later, this option is required\&.
@@ -1153,13 +1205,6 @@ In NDB 8\&.0\&.15 and later, this option is required\&.
 \fB\-c\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1192,16 +1237,39 @@ Alias for
 .sp -1
 .IP \(bu 2.3
 .\}
+\fB\-\-decrypt\fR
+.TS
+allbox tab(:);
+lB l
+lB l.
+T{
+Command-Line Format
+T}:T{
+--decrypt
+T}
+T{
+Introduced
+T}:T{
+8.0.22-ndb-8.0.22
+T}
+.TE
+.sp 1
+Decrypt an encrypted backup using the password supplied by the
+\fB\-\-backup\-password\fR
+option\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
 \fB\-\-disable\-indexes\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -1228,13 +1296,6 @@ backup\&. Afterwards, you can restore indexes for all tables at once with multit
 \fB\-f\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -1264,13 +1325,6 @@ causes the system table to be restored\&.
 \fB\-\-exclude\-databases\fR=\fIdb\-list\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1307,13 +1361,6 @@ This option is often used in combination with
 \fB\-\-exclude\-intermediate\-sql\-tables[\fR=\fITRUE|FALSE]\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1360,13 +1407,6 @@ by default\&.
 \fB\-\-exclude\-missing\-columns\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -1395,13 +1435,6 @@ options described elsewhere in this section to do so, then restore data to the r
 \fB\-\-exclude\-missing\-tables\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -1426,13 +1459,6 @@ to ignore any tables from the backup that are not found in the target database\&
 \fB\-\-exclude\-tables\fR=\fItable\-list\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1472,7 +1498,7 @@ options (other options possibly required have been omitted for clarity), and the
 .nr an-no-space-flag 1
 .nr an-break-flag 1
 .br
-.B Table\ \&22.269.\ \&Several invocations of ndb_restore using \-\-exclude\-* options, and the effects these options have on restoring from an NDB Cluster backup\&.
+.B Table\ \&23.40.\ \&Several invocations of ndb_restore using \-\-exclude\-* options, and the effects these options have on restoring from an NDB Cluster backup\&.
 .TS
 allbox tab(:);
 lB lB.
@@ -1648,13 +1674,6 @@ db1:
 \fB\-\-fields\-enclosed\-by\fR=\fIchar\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1689,13 +1708,6 @@ Each column value is enclosed by the string passed to this option (regardless of
 \fB\-\-fields\-optionally\-enclosed\-by\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1734,13 +1746,6 @@ ENUM)\&.
 \fB\-\-fields\-terminated\-by\fR=\fIchar\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1775,13 +1780,6 @@ The string passed to this option is used to separate column values\&. The defaul
 \fB\-\-hex\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -1804,13 +1802,6 @@ If this option is used, all binary values are output in hexadecimal format\&.
 \fB\-\-ignore\-extended\-pk\-updates\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -1888,13 +1879,6 @@ For more information, see the description of
 \fB\-\-include\-databases\fR=\fIdb\-list\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -1929,13 +1913,6 @@ Comma\-delimited list of one or more databases to restore\&. Often used together
 \fB\-\-include\-stored\-grants\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -1965,7 +1942,7 @@ T}
 In NDB 8\&.0\&.19 and later,
 \fBndb_restore\fR
 does not by default restore shared users and grants (see
-Section\ \&22.5.16, \(lqDistributed MySQL Privileges with NDB_STORED_USER\(rq) to the
+Section\ \&23.5.12, \(lqDistributed MySQL Privileges with NDB_STORED_USER\(rq) to the
 ndb_sql_metadata
 table\&. Specifying this option causes it to do so\&.
 .RE
@@ -1981,13 +1958,6 @@ table\&. Specifying this option causes it to do so\&.
 \fB\-\-include\-tables\fR=\fItable\-list\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -2026,7 +1996,7 @@ options (other options possibly required have been omitted for clarity), and the
 .nr an-no-space-flag 1
 .nr an-break-flag 1
 .br
-.B Table\ \&22.270.\ \&Several invocations of ndb_restore using \-\-include\-* options, and their effects on restoring from an NDB Cluster backup\&.
+.B Table\ \&23.41.\ \&Several invocations of ndb_restore using \-\-include\-* options, and their effects on restoring from an NDB Cluster backup\&.
 .TS
 allbox tab(:);
 lB lB.
@@ -2148,13 +2118,6 @@ One or more tables from a single database
 \fB\-\-lines\-terminated\-by\fR=\fIchar\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -2190,13 +2153,6 @@ Specifies the string used to end each line of output\&. The default is a linefee
 \fB\-L\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -2239,13 +2195,6 @@ reports any truncation of data that it performs during lossy conversions once pe
 \fB\-\-no\-binlog\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -2271,13 +2220,6 @@ to their binary logs\&.
 \fB\-d\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -2301,7 +2243,7 @@ T}
 This option stops
 \fBndb_restore\fR
 from restoring any NDB Cluster Disk Data objects, such as tablespaces and log file groups; see
-Section\ \&22.5.13, \(lqNDB Cluster Disk Data Tables\(rq, for more information about these\&.
+Section\ \&23.5.10, \(lqNDB Cluster Disk Data Tables\(rq, for more information about these\&.
 .RE
 .sp
 .RS 4
@@ -2316,13 +2258,6 @@ Section\ \&22.5.13, \(lqNDB Cluster Disk Data Tables\(rq, for more information a
 \fB\-u\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -2351,13 +2286,6 @@ columns created using the old fixed format are resized and recreated using the v
 \fB\-z\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -2382,13 +2310,6 @@ This option can be used to restore a backup taken from one node group to a diffe
 \fB\-n\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -2428,13 +2349,6 @@ In NDB 8\&.0\&.15 and later, this option is required\&.
 \fB\-\-num\-slices\fR=\fI#\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -2691,13 +2605,6 @@ It is possible to employ different values for this option on different data node
 \fB\-p\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -2752,13 +2659,6 @@ file\(emthat is, the fuzzy snapshot of the data; it is not used for building or 
 \fB\-P\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -2816,13 +2716,6 @@ BINARY\&.
 \fB\-\-print\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -2886,13 +2779,6 @@ makes no attempt to restore data or metadata to an NDB Cluster\&.
 \fB\-\-print\-data\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -2942,13 +2828,6 @@ column values are always truncated\&. Such values are truncated to the first 256
 \fB\-\-print\-log\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -2986,13 +2865,6 @@ stdout\&.
 \fB\-\-print\-meta\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -3028,13 +2900,6 @@ stdout\&.
 \fBprint\-sql\-log\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -3076,13 +2941,6 @@ columns\&.
 \fB\-\-progress\-frequency\fR=\fIN\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -3132,13 +2990,6 @@ seconds while the backup is in progress\&. 0 (the default) causes no status repo
 \fB\-A\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -3244,13 +3095,6 @@ following a successful restoration\&.
 \fB\-\-rebuild\-indexes\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -3299,13 +3143,6 @@ and related parameters), in order to free space more quickly\&.
 \fB\-\-remap\-column=\fR\fB\fIdb\fR\fR\fB\&.\fR\fB\fItbl\fR\fR\fB\&.\fR\fB\fIcol\fR\fR\fB:\fR\fB\fIfn\fR\fR\fB:\fR\fB\fIargs\fR\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -3366,13 +3203,11 @@ When used together with
 .sp -1
 .IP \(bu 2.3
 .\}
-\fIcol\fR: Name of the column to be updated\&. This column must be of one of the integer types
-TINYINT,
-SMALLINT,
-MEDIUMINT,
-BIGINT, or
+\fIcol\fR: Name of the column to be updated\&. This column must be of type
 INT
-(INTEGER)\&.
+or
+BIGINT\&. The column can also be but is not required to be
+UNSIGNED\&.
 .RE
 .sp
 .RS 4
@@ -3399,24 +3234,24 @@ offset\&.
 offset
 function, is supported\&. Negative values are supported\&. The size of the argument cannot exceed that of the signed variant of the column\*(Aqs type; for example, if
 \fIcol\fR
-is a
-MEDIUMINT
+is an
+INT
 column, then the allowed range of the argument passed to the
 offset
 function is
-\-8388608
+\-2147483648
 to
-\-8388607
+2147483647
 (see
 Section\ \&11.1.2, \(lqInteger Types (Exact Value) - INTEGER, INT, SMALLINT, TINYINT, MEDIUMINT, BIGINT\(rq)\&.
 .sp
 If applying the offset value to the column would cause an overflow or underflow, the restore operation fails\&. This could happen, for example, if the column is a
-TINYINT, and the option attempts to apply an offset value of 8 on a row in which the column value is 125, since
-125 + 8 = 133 > 127\&.
+BIGINT, and the option attempts to apply an offset value of 8 on a row in which the column value is 4294967291, since
+4294967291 + 8 = 4294967299 > 4294967295\&.
 .RE
 .sp
 This option can be useful when you wish to merge data stored in multiple source instances of NDB Cluster (all using the same schema) into a single destination NDB Cluster, using NDB native backup (see
-Section\ \&22.5.3.2, \(lqUsing The NDB Cluster Management Client to Create a Backup\(rq) and
+Section\ \&23.5.8.2, \(lqUsing The NDB Cluster Management Client to Create a Backup\(rq) and
 \fBndb_restore\fR
 to merge the data, where primary and unique key values are overlapping between source clusters, and it is necessary as part of the process to remap these values to ranges that do not overlap\&. It may also be necessary to preserve other relationships between tables\&. To fulfill such requirements, it is possible to use the option multiple times in the same invocation of
 \fBndb_restore\fR
@@ -3476,13 +3311,6 @@ Replication of changes from merged to unmerged tables, or from unmerged to merge
 \fB\-r\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -3520,13 +3348,6 @@ table data and logs\&.
 \fB\-e\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -3535,14 +3356,14 @@ T}:T{
 T}
 .TE
 .sp 1
-Add (or restore) epoch information to the cluster replication status table\&. This is useful for starting replication on an NDB Cluster replication slave\&. When this option is used, the row in the
+Add (or restore) epoch information to the cluster replication status table\&. This is useful for starting replication on an NDB Cluster replica\&. When this option is used, the row in the
 mysql\&.ndb_apply_status
 having
 0
 in the
 id
 column is updated if it already exists; such a row is inserted if it does not already exist\&. (See
-Section\ \&22.6.9, \(lqNDB Cluster Backups With NDB Cluster Replication\(rq\&.)
+Section\ \&23.6.9, \(lqNDB Cluster Backups With NDB Cluster Replication\(rq\&.)
 .RE
 .sp
 .RS 4
@@ -3557,13 +3378,6 @@ Section\ \&22.6.9, \(lqNDB Cluster Backups With NDB Cluster Replication\(rq\&.)
 \fB\-m\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -3635,13 +3449,6 @@ prior to performing the restore\&.)
 \fB\-\-restore\-privilege\-tables\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -3676,7 +3483,7 @@ to restore them\&.
 In NDB 8\&.0\&.16 and later, such tables are not used for access control; as part of the MySQL server\*(Aqs upgrade process, the server creates
 InnoDB
 copies of these tables local to itself\&. For more information, see
-Section\ \&22.2.8, \(lqUpgrading and Downgrading NDB Cluster\(rq, as well as
+Section\ \&23.2.7, \(lqUpgrading and Downgrading NDB Cluster\(rq, as well as
 Section\ \&6.2.3, \(lqGrant Tables\(rq\&.
 .RE
 .sp
@@ -3691,13 +3498,6 @@ Section\ \&6.2.3, \(lqGrant Tables\(rq\&.
 \fB\-\-rewrite\-database\fR=\fIolddb,newdb\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l.
@@ -3794,13 +3594,6 @@ When restoring from multiple backup databases into a single target database usin
 \fB\-\-skip\-broken\-objects\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -3830,13 +3623,6 @@ option works only in the case of missing blob parts tables\&.
 \fB\-s\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -3922,13 +3708,6 @@ Different distribution key settings
 \fB\-\-skip\-unknown\-objects\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l.
 T{
 Command-Line Format
@@ -3955,13 +3734,6 @@ backup\&. This can be used for restoring a backup made from a cluster running (f
 \fB\-\-slice\-id\fR=\fI#\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -4022,13 +3794,6 @@ elsewhere in this section\&.
 \fIdir_name\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l.
 T{
@@ -4062,13 +3827,6 @@ for the current directory\&.
 \fB\-\-verbose\fR=\fI#\fR
 .TS
 allbox tab(:);
-lB lB.
-T{
-Property
-T}:T{
-Value
-T}
-.T&
 lB l
 lB l
 lB l
@@ -4123,18 +3881,202 @@ in such cases\&.
 .PP
 After using
 \fBndb_restore\fR
-to initialize an NDB Cluster for use in circular replication, binary logs on the SQL node acting as the replication slave are not automatically created, and you must cause them to be created manually\&. To cause the binary logs to be created, issue a
+to initialize an NDB Cluster for use in circular replication, binary logs on the SQL node acting as the replica are not automatically created, and you must cause them to be created manually\&. To cause the binary logs to be created, issue a
 SHOW TABLES
 statement on that SQL node before running
 START SLAVE\&. This is a known issue in NDB Cluster\&.
 .sp .5v
 .RE
+.SS "Restoring an NDB Backup to a Different Version of NDB Cluster"
 .PP
-\fBRestoring a backup to a previous version of NDB Cluster\fR. You may encounter issues when restoring a backup taken from a later version of NDB Cluster to a previous one, due to the use of features which do not exist in the earlier version\&. For example, tables created in NDB 8\&.0 by default use the
+The following two sections provide information about restoring a native NDB backup to a different version of NDB Cluster from the version in which the backup was taken\&.
+.PP
+In addition, you should consult
+Section\ \&23.2.7, \(lqUpgrading and Downgrading NDB Cluster\(rq, for other issues you may encounter when attempting to restore an NDB backup to a cluster running a different version of the NDB software\&.
+.PP
+It is also advisable to review
+What is New in NDB Cluster 8.0, as well as
+Section\ \&2.11.4, \(lqChanges in MySQL 8.0\(rq, for other changes between NDB 8\&.0 and previous versions of NDB Cluster that may be relevant to your particular circumstances\&.
+.sp
+.it 1 an-trap
+.nr an-no-space-flag 1
+.nr an-break-flag 1
+.br
+.ps +1
+\fBRestoring an NDB backup to a previous version of NDB Cluster\fR
+.RS 4
+.PP
+You may encounter issues when restoring a backup taken from a later version of NDB Cluster to a previous one, due to the use of features which do not exist in the earlier version\&. Some of these issues are listed here:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+Tables created in NDB 8\&.0 by default use the
 utf8mb4_ai_ci
 character set, which is not available in NDB 7\&.6 and earlier, and so cannot be read by an
 \fBndb_restore\fR
-binary from one of these earlier versions\&.
+binary from one of these earlier versions\&. In such cases, it is necessary to alter any tables using
+utf8mb4_ai_ci
+so that they use a character set supported in the older version prior to performing the backup\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+Due to changes in how the MySQL Server and NDB handle table metadata, tables created or altered using the included MySQL server binary from NDB 8\&.0\&.14 or later cannot be restored using
+\fBndb_restore\fR
+to an earlier version of NDB Cluster\&. Such tables use
+\&.sdi
+files which are not understood by older versions of
+\fBmysqld\fR\&.
+.sp
+A backup taken in NDB 8\&.0\&.14 or later of tables which were created in NDB 8\&.0\&.13 or earlier, and which have not been altered since upgrading to NDB 8\&.0\&.14 or later, should be restorable to older versions of NDB Cluster\&.
+.sp
+Since it is possible to restore metadata and table data separately, you can in such cases restore the table schemas from a dump made using
+\fBmysqldump\fR, or by executing the necessary
+CREATE TABLE
+statements manually, then import only the table data using
+\fBndb_restore\fR
+with the
+\fB\-\-restore\-data\fR
+option\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+Encrypted backups created in NDB 8\&.0\&.22 and later cannot be restored using
+\fBndb_restore\fR
+from NDB 8\&.0\&.21 or earlier\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+The
+NDB_STORED_USER
+privilege is not supported prior to NDB 8\&.0\&.18\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+NDB Cluster 8\&.0\&.18 and later supports up to 144 data nodes, while earlier versions support a maximum of only 48 data nodes\&. See
+the section called \(lqRestoring to Fewer Nodes Than the Original\(rq, for information with situations in which this incompatibility causes an issue\&.
+.RE
+.RE
+.sp
+.it 1 an-trap
+.nr an-no-space-flag 1
+.nr an-break-flag 1
+.br
+.ps +1
+\fBRestoring an NDB backup to a later version of NDB Cluster\fR
+.RS 4
+.PP
+In general, it should be possible to restore a backup created using the
+\fBndb_mgm\fR
+client
+START BACKUP
+command in an older version of NDB to a newer version, provided that you use the
+\fBndb_restore\fR
+binary that comes with the newer version\&. (It may be possible to use the older version of
+\fBndb_restore\fR, but this is not recommended\&.) Additional potential issues are listed here:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+When restoring the metadata from a backup (\fB\-\-restore\-meta\fR
+option),
+\fBndb_restore\fR
+normally attempts to reproduce the captured table schema exactly as it was when the backup was taken\&.
+.sp
+Tables created in versions of NDB prior to 8\&.0\&.14 use
+\&.frm
+files for their metadata\&. These files can be read by the
+\fBmysqld\fR
+in NDB 8\&.0\&.14 and later, which can use the information contained therein to create the
+\&.sdi
+files used by the MySQL data dictionary in later versions\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+When restoring an older backup to a newer version of NDB, it may not be possible to take advantage of newer features such as hashmap partitioning, greater number of hashmap buckets, read backup, and different partitioning layouts\&. For this reason, it may be preferable to restore older schemas using
+\fBmysqldump\fR
+and the
+\fBmysql\fR
+client, which allows NDB to make use of the new schema features\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+Tables using the old temporal types which did not support fractional seconds (used prior to MySQL 5\&.6\&.4 and NDB 7\&.3\&.31) cannot be restored to NDB 8\&.0 using
+\fBndb_restore\fR\&. You can check such tables using
+CHECK TABLE, and then upgrade them to the newer temporal column format, if necessary, using
+REPAIR TABLE
+in the
+\fBmysql\fR
+client; this must be done prior to taking the backup\&. See
+Section\ \&2.11.5, \(lqPreparing Your Installation for Upgrade\(rq, for more information\&.
+.sp
+You also also restore such tables using a dump created with
+\fBmysqldump\fR\&.
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+Distributed grant tables created in NDB 7\&.6 and earlier are not supported in NDB 8\&.0\&. Such tables can be restored to an NDB 8\&.0 cluster, but they have no effect on access control\&.
+.RE
+.RE
 .SS "Restoring to a different number of data nodes"
 .PP
 It is possible to restore from an NDB backup to a cluster having a different number of data nodes than the original from which the backup was taken\&. The following two sections discuss, respectively, the cases where the target cluster has a lesser or greater number of data nodes than the source of the backup\&.
@@ -4166,7 +4108,8 @@ file:
 .RS 4
 .\}
 .nf
-[ndbd]NodeId=2
+[ndbd]
+NodeId=2
 HostName=host2
 [ndbd]
 NodeId=4
@@ -4197,7 +4140,7 @@ or the equivalent\&.
 .IP "  2." 4.2
 .\}
 Perform a backup in the normal manner\&. See
-Section\ \&22.5.3.2, \(lqUsing The NDB Cluster Management Client to Create a Backup\(rq, for information about how to do this\&.
+Section\ \&23.5.8.2, \(lqUsing The NDB Cluster Management Client to Create a Backup\(rq, for information about how to do this\&.
 .RE
 .sp
 .RS 4
@@ -4779,7 +4722,7 @@ can contact the management server\&.
 Beginning with NDB Cluster 8\&.0\&.16, it is possible to take parallel backups on each data node using
 \fBndbmtd\fR
 with multiple LDMs (see
-Section\ \&22.5.3.5, \(lqTaking an NDB Backup with Parallel Data Nodes\(rq)\&. The next two sections describe how to restore backups that were taken in this fashion\&.
+Section\ \&23.5.8.5, \(lqTaking an NDB Backup with Parallel Data Nodes\(rq)\&. The next two sections describe how to restore backups that were taken in this fashion\&.
 .sp
 .it 1 an-trap
 .nr an-no-space-flag 1

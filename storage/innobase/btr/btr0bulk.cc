@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2020, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2014, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -280,8 +280,8 @@ void PageBulk::finish() {
   ulint n_rec_to_assign = m_rec_no - m_slotted_rec_no;
 
   /* Fill slots for non-supremum records if possible.
-   * Slot for supremum record could store up to
-   * PAGE_DIR_SLOT_MAX_N_OWNED-1 records. */
+   Slot for supremum record could store up to
+   PAGE_DIR_SLOT_MAX_N_OWNED-1 records. */
   while (n_rec_to_assign >= PAGE_DIR_SLOT_MAX_N_OWNED) {
     static constexpr ulint RECORDS_PER_SLOT =
         (PAGE_DIR_SLOT_MAX_N_OWNED + 1) / 2;
@@ -412,7 +412,7 @@ PageBulk::SplitPoint PageBulk::getSplitRec() {
     ut_ad(page_rec_is_user_rec(rec));
   } else {
     /* rec is to be moved, and this is used as number of records
-     * before split */
+     before split */
     n_recs--;
   }
 
@@ -517,9 +517,9 @@ void PageBulk::setPrev(page_no_t prev_page_no) {
   btr_page_set_prev(m_page, nullptr, prev_page_no, m_mtr);
 }
 
-/** Check if required space is available in the page for the rec to be inserted.
-We check fill factor & padding here.
-@param[in]	rec_size	required length
+/** Check if required space is available in the page for the rec
+to be inserted.	We check fill factor & padding here.
+@param[in]	rec_size	required space
 @return true	if space is available */
 bool PageBulk::isSpaceAvailable(ulint rec_size) const {
   ulint slot_size = page_dir_calc_reserved_space(m_rec_no + 1) -
@@ -600,6 +600,7 @@ void PageBulk::release() {
 
   ut_ad(!dict_index_is_spatial(m_index));
 
+  ut_ad(m_block->page.buf_fix_count > 0);
   /* We fix the block because we will re-pin it soon. */
   buf_block_buf_fix_inc(m_block, __FILE__, __LINE__);
 
@@ -620,6 +621,8 @@ void PageBulk::latch() {
   mtr_set_log_mode(m_mtr, MTR_LOG_NO_REDO);
   mtr_set_flush_observer(m_mtr, m_flush_observer);
 
+  ut_ad(m_block->page.buf_fix_count > 0);
+
   /* TODO: need a simple and wait version of buf_page_optimistic_get. */
   auto ret =
       buf_page_optimistic_get(RW_X_LATCH, m_block, m_modify_clock,
@@ -636,6 +639,23 @@ void PageBulk::latch() {
   }
 
   buf_block_buf_fix_dec(m_block);
+  /*
+  The caller is going to use the m_block, so it needs to be buffer-fixed even
+  after the decrement above. This works like this:
+  release(){ //initially buf_fix_count == N > 0
+    buf_fix_count++ // N+1
+    mtr_commit(){
+      buf_fix_count-- // N
+    }
+  }//at the end buf_fix_count == N > 0
+  latch(){//initially buf_fix_count == M > 0
+    buf_page_get_gen/buf_page_optimistic_get internally(){
+      buf_fix_count++ // M+1
+    }
+    buf_fix_count-- // M
+  }//at the end buf_fix_count == M > 0
+  */
+  ut_ad(m_block->page.buf_fix_count > 0);
 
   ut_ad(m_cur_rec > m_page && m_cur_rec < m_heap_top);
 }
@@ -1085,7 +1105,7 @@ dberr_t BtrBulk::finish(dberr_t err) {
       btr_page_free_low(m_index, last_block, m_root_level, &mtr);
 
       /* Do not flush the last page. */
-      last_block->page.flush_observer = nullptr;
+      last_block->page.reset_flush_observer();
 
       mtr_commit(&mtr);
 

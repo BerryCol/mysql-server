@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2020, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -120,10 +120,10 @@ void trx_set_flush_observer(trx_t *trx, FlushObserver *observer) {
   trx->flush_observer = observer;
 }
 
-/** Set detailed error message for the transaction. */
-void trx_set_detailed_error(trx_t *trx,      /*!< in: transaction struct */
-                            const char *msg) /*!< in: detailed error message */
-{
+/** Set detailed error message for the transaction.
+@param[in] trx Transaction struct
+@param[in] msg Detailed error message */
+void trx_set_detailed_error(trx_t *trx, const char *msg) {
   ut_strlcpy(trx->detailed_error, msg, MAX_DETAILED_ERROR_LEN);
 }
 
@@ -219,8 +219,7 @@ static void trx_init(trx_t *trx) {
   the transaction. */
 
   if (!TrxInInnoDB::is_async_rollback(trx)) {
-    os_thread_id_t thread_id = trx->killed_by;
-    os_compare_and_swap_thread_id(&trx->killed_by, thread_id, 0);
+    trx->killed_by.store(0);
 
     /* Note: Do not set to 0, the ref count is decremented inside
     the TrxInInnoDB() destructor. We only need to clear the flags. */
@@ -456,6 +455,8 @@ static trx_t *trx_create_low() {
   trx->api_auto_commit = false;
 
   trx->read_write = true;
+
+  trx->purge_sys_trx = false;
 
   /* Background trx should not be forced to rollback,
   we will unset the flag for user trx. */
@@ -1054,13 +1055,13 @@ static trx_rseg_t *get_next_redo_rseg_from_undo_spaces() {
   less than rsegs->size(). */
   ulint target_rollback_segments = srv_rollback_segments;
 
-  static ulint rseg_counter = 0;
+  static std::atomic<ulint> rseg_counter{0};
   trx_rseg_t *rseg = nullptr;
   ulint current = rseg_counter;
 
   /* Increment the static redo_rseg_slot so the next call from any thread
   starts with the next rseg. */
-  os_atomic_increment_ulint(&rseg_counter, 1);
+  rseg_counter.fetch_add(1);
 
   while (rseg == nullptr) {
     /* Traverse the rsegs like this: (space, rseg_id)
@@ -1105,7 +1106,7 @@ static trx_rseg_t *get_next_redo_rseg_from_undo_spaces() {
 The assigned slots may have gaps but the vector does not.
 @return assigned rollback segment instance */
 static trx_rseg_t *get_next_redo_rseg_from_trx_sys() {
-  static ulint rseg_counter = 0;
+  static std::atomic<ulint> rseg_counter{0};
   ulong n_rollback_segments = srv_rollback_segments;
 
   /* Versions 5.6 and 5.7 of InnoDB would allow 128 as the max for
@@ -1123,8 +1124,7 @@ static trx_rseg_t *get_next_redo_rseg_from_trx_sys() {
   ut_ad(n_rollback_segments <= trx_sys->rsegs.size());
 
   /* Try the next slot that no other thread is looking at */
-  ulint slot =
-      os_atomic_increment_ulint(&rseg_counter, 1) % n_rollback_segments;
+  ulint slot = (rseg_counter.fetch_add(1) + 1) % n_rollback_segments;
 
   /* s_lock the vector since it might be sorted when added to. */
   trx_sys->rsegs.s_lock();
@@ -1154,14 +1154,13 @@ static trx_rseg_t *get_next_redo_rseg() {
 /** Get the next noredo rollback segment.
 @return assigned rollback segment instance */
 static trx_rseg_t *get_next_temp_rseg() {
-  static ulint temp_rseg_counter = 0;
+  static std::atomic<ulint> temp_rseg_counter{0};
   ulong n_rollback_segments = srv_rollback_segments;
 
   ut_ad(n_rollback_segments <= trx_sys->tmp_rsegs.size());
 
   /* Try the next slot that no other thread is looking at */
-  ulint slot =
-      os_atomic_increment_ulint(&temp_rseg_counter, 1) % n_rollback_segments;
+  ulint slot = (temp_rseg_counter.fetch_add(1) + 1) % n_rollback_segments;
 
   /* No need to s_lock the vector since it is only added to at the end,
   and it is never resized or sorted. */
@@ -1512,7 +1511,7 @@ static bool trx_write_serialisation_history(
 
       /* Set flag if GTID information need to persist. */
       auto undo_ptr = &trx->rsegs.m_redo;
-      trx_undo_gtid_set(trx, undo_ptr->update_undo);
+      trx_undo_gtid_set(trx, undo_ptr->update_undo, false);
 
       trx_undo_update_cleanup(trx, undo_ptr, undo_hdr_page, update_rseg_len,
                               (update_rseg_len ? 1 : 0), mtr);
@@ -1709,8 +1708,6 @@ static void trx_erase_lists(trx_t *trx, bool serialised, Gtid_desc &gtid_desc) {
   ut_ad(trx_sys_mutex_own());
 
   if (serialised) {
-    UT_LIST_REMOVE(trx_sys->serialisation_list, trx);
-
     /* Add GTID to be persisted to disk table. It must be done ...
     1.After the transaction is marked committed in undo. Otherwise
       GTID might get committed before the transaction commit on disk.
@@ -1720,6 +1717,10 @@ static void trx_erase_lists(trx_t *trx, bool serialised, Gtid_desc &gtid_desc) {
       auto &gtid_persistor = clone_sys->get_gtid_persistor();
       gtid_persistor.add(gtid_desc);
     }
+    /* Do after adding GTID as trx_sys mutex could now be released and
+    re-acquired while adding GTID and we still need to satisfy condition
+    [2] above. */
+    UT_LIST_REMOVE(trx_sys->serialisation_list, trx);
   }
 
   trx_ids_t::iterator it = std::lower_bound(trx_sys->rw_trx_ids.begin(),
@@ -1990,12 +1991,11 @@ written */
   ut_a(trx->error_state == DB_SUCCESS);
 }
 
-/** Commits a transaction and a mini-transaction. */
-void trx_commit_low(
-    trx_t *trx, /*!< in/out: transaction */
-    mtr_t *mtr) /*!< in/out: mini-transaction (will be committed),
-                or NULL if trx made no modifications */
-{
+/** Commits a transaction and a mini-transaction.
+@param[in,out] trx Transaction
+@param[in,out] mtr Mini-transaction (will be committed), or null if trx made no
+modifications */
+void trx_commit_low(trx_t *trx, mtr_t *mtr) {
   assert_trx_nonlocking_or_in_list(trx);
   ut_ad(!trx_state_eq(trx, TRX_STATE_COMMITTED_IN_MEMORY));
   ut_ad(!mtr || mtr->is_active());
@@ -2299,9 +2299,6 @@ dberr_t trx_commit_for_mysql(trx_t *trx) /*!< in/out: transaction */
       if (db_err != DB_SUCCESS) {
         return (db_err);
       }
-
-      /* Flush prepare GTID for XA prepared transactions. */
-      trx_undo_gtid_flush_prepare(trx);
 
       if (trx->id != 0) {
         trx_update_mod_tables_timestamp(trx);
@@ -2754,7 +2751,7 @@ static lsn_t trx_prepare_low(
 
     if (undo_ptr->update_undo != nullptr) {
       if (!noredo_logging) {
-        trx_undo_gtid_set(trx, undo_ptr->update_undo);
+        trx_undo_gtid_set(trx, undo_ptr->update_undo, true);
       }
       trx_undo_set_state_at_prepare(trx, undo_ptr->update_undo, false, &mtr);
     }
@@ -2916,15 +2913,15 @@ dberr_t trx_prepare_for_mysql(trx_t *trx) {
 static bool get_table_name_info(st_handler_tablename *table,
                                 const dict_table_t *dd_table,
                                 MEM_ROOT *mem_root) {
-  const char *ptr;
+  std::string db_str;
+  std::string table_str;
+  dict_name::get_table(dd_table->name.m_name, db_str, table_str);
 
-  size_t len = dict_get_db_name_len(dd_table->name.m_name);
-  table->db = strmake_root(mem_root, dd_table->name.m_name, len);
+  table->db = strmake_root(mem_root, db_str.c_str(), db_str.size());
   if (table->db == nullptr) return true;
 
-  ptr = dict_remove_db_name(dd_table->name.m_name);
-  len = ut_strlen(ptr);
-  table->tablename = strmake_root(mem_root, ptr, len);
+  table->tablename =
+      strmake_root(mem_root, table_str.c_str(), table_str.size());
   if (table->tablename == nullptr) return true;
 
   return false;
@@ -3070,11 +3067,10 @@ trx_t *trx_get_trx_by_xid(const XID *xid) {
   return (trx);
 }
 
-/** Starts the transaction if it is not yet started. */
-void trx_start_if_not_started_xa_low(
-    trx_t *trx,      /*!< in/out: transaction */
-    bool read_write) /*!< in: true if read write transaction */
-{
+/** Starts the transaction if it is not yet started.
+@param[in,out] trx Transaction
+@param[in] read_write True if read write transaction */
+void trx_start_if_not_started_xa_low(trx_t *trx, bool read_write) {
   switch (trx->state) {
     case TRX_STATE_NOT_STARTED:
     case TRX_STATE_FORCED_ROLLBACK:
@@ -3102,11 +3098,10 @@ void trx_start_if_not_started_xa_low(
   ut_error;
 }
 
-/** Starts the transaction if it is not yet started. */
-void trx_start_if_not_started_low(
-    trx_t *trx,      /*!< in: transaction */
-    bool read_write) /*!< in: true if read write transaction */
-{
+/** Starts the transaction if it is not yet started.
+@param[in] trx Transaction
+@param[in] read_write True if read write transaction */
+void trx_start_if_not_started_low(trx_t *trx, bool read_write) {
   switch (trx->state) {
     case TRX_STATE_NOT_STARTED:
     case TRX_STATE_FORCED_ROLLBACK:
@@ -3346,8 +3341,7 @@ void trx_kill_blocking(trx_t *trx) {
     version++;
     ut_ad(victim_trx->version == version);
 
-    os_thread_id_t thread_id = victim_trx->killed_by;
-    os_compare_and_swap_thread_id(&victim_trx->killed_by, thread_id, 0);
+    victim_trx->killed_by.store(0);
 
     victim_trx->in_innodb &= TRX_FORCE_ROLLBACK_MASK;
 

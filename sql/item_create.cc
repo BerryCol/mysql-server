@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2000, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,6 +34,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/types.h>
+
 #include <algorithm>
 #include <cctype>
 #include <iterator>
@@ -79,7 +80,7 @@
 #include "sql/sql_udf.h"
 #include "sql/system_variables.h"
 #include "sql_string.h"
-#include "tztime.h"  // adjust_time_zone
+#include "tztime.h"  // convert_time_zone_displacement
 
 /**
   @addtogroup GROUP_PARSER
@@ -1089,8 +1090,8 @@ Internal_function_factory<Instantiator_fn>
 */
 class Create_sp_func : public Create_qfunc {
  public:
-  virtual Item *create(THD *thd, LEX_STRING db, LEX_STRING name,
-                       bool use_explicit_name, PT_item_list *item_list);
+  Item *create(THD *thd, LEX_STRING db, LEX_STRING name, bool use_explicit_name,
+               PT_item_list *item_list) override;
 
   static Create_sp_func s_singleton;
 
@@ -1098,7 +1099,7 @@ class Create_sp_func : public Create_qfunc {
   /** Constructor. */
   Create_sp_func() {}
   /** Destructor. */
-  virtual ~Create_sp_func() {}
+  ~Create_sp_func() override {}
 };
 
 Item *Create_qfunc::create_func(THD *thd, LEX_STRING name,
@@ -1519,6 +1520,7 @@ static const std::pair<const char *, Create_func *> func_array[] = {
     {"ST_ENVELOPE", SQL_FN(Item_func_envelope, 1)},
     {"ST_EQUALS", SQL_FN(Item_func_st_equals, 2)},
     {"ST_EXTERIORRING", SQL_FACTORY(Exteriorring_instantiator)},
+    {"ST_FRECHETDISTANCE", SQL_FN_V_LIST(Item_func_st_frechet_distance, 2, 3)},
     {"ST_GEOHASH", SQL_FN_V(Item_func_geohash, 2, 3)},
     {"ST_GEOMCOLLFROMTEXT", SQL_FACTORY(Geomcollfromtext_instantiator)},
     {"ST_GEOMCOLLFROMTXT", SQL_FACTORY(Geomcollfromtxt_instantiator)},
@@ -1534,6 +1536,8 @@ static const std::pair<const char *, Create_func *> func_array[] = {
     {"ST_GEOMFROMGEOJSON", SQL_FN_V(Item_func_geomfromgeojson, 1, 3)},
     {"ST_GEOMFROMTEXT", SQL_FACTORY(Geomfromtext_instantiator)},
     {"ST_GEOMFROMWKB", SQL_FACTORY(Geomfromwkb_instantiator)},
+    {"ST_HAUSDORFFDISTANCE",
+     SQL_FN_V_LIST(Item_func_st_hausdorff_distance, 2, 3)},
     {"ST_INTERIORRINGN", SQL_FACTORY(Sp_interiorringn_instantiator)},
     {"ST_INTERSECTS", SQL_FN(Item_func_st_intersects, 2)},
     {"ST_INTERSECTION", SQL_FN(Item_func_st_intersection, 2)},
@@ -1621,6 +1625,8 @@ static const std::pair<const char *, Create_func *> func_array[] = {
      SQL_FN_LIST_INTERNAL(Item_func_get_dd_index_sub_part_length, 5)},
     {"GET_DD_CREATE_OPTIONS",
      SQL_FN_INTERNAL(Item_func_get_dd_create_options, 3)},
+    {"GET_DD_SCHEMA_OPTIONS",
+     SQL_FN_INTERNAL(Item_func_get_dd_schema_options, 1)},
     {"GET_DD_TABLESPACE_PRIVATE_DATA",
      SQL_FN_INTERNAL(Item_func_get_dd_tablespace_private_data, 2)},
     {"GET_DD_INDEX_PRIVATE_DATA",
@@ -1635,6 +1641,7 @@ static const std::pair<const char *, Create_func *> func_array[] = {
     {"CAN_ACCESS_ROUTINE",
      SQL_FN_LIST_INTERNAL(Item_func_can_access_routine, 5)},
     {"CAN_ACCESS_EVENT", SQL_FN_INTERNAL(Item_func_can_access_event, 1)},
+    {"CAN_ACCESS_USER", SQL_FN_INTERNAL(Item_func_can_access_user, 2)},
     {"ICU_VERSION", SQL_FN(Item_func_icu_version, 0)},
     {"CAN_ACCESS_RESOURCE_GROUP",
      SQL_FN_INTERNAL(Item_func_can_access_resource_group, 1)},
@@ -1708,7 +1715,7 @@ static const std::pair<const char *, Create_func *> func_array[] = {
     {"CONVERT_INTERVAL_TO_USER_INTERVAL",
      SQL_FN_INTERNAL(Item_func_convert_interval_to_user_interval, 2)},
     {"INTERNAL_GET_DD_COLUMN_EXTRA",
-     SQL_FN_LIST_INTERNAL(Item_func_internal_get_dd_column_extra, 6)},
+     SQL_FN_LIST_INTERNAL(Item_func_internal_get_dd_column_extra, 8)},
     {"INTERNAL_GET_USERNAME",
      SQL_FN_LIST_INTERNAL_V(Item_func_internal_get_username, 0, 1)},
     {"INTERNAL_GET_HOSTNAME",
@@ -1819,6 +1826,13 @@ static bool validate_cast_type_and_extract_length(
     case ITEM_CAST_SIGNED_INT:
     case ITEM_CAST_UNSIGNED_INT:
     case ITEM_CAST_DATE:
+      return false;
+    case ITEM_CAST_YEAR:
+      if (as_array) {
+        my_error(ER_NOT_SUPPORTED_YET, MYF(0),
+                 "CAST-ing data to array of YEAR");
+        return true;
+      }
       return false;
     case ITEM_CAST_TIME:
     case ITEM_CAST_DATETIME: {
@@ -1951,6 +1965,7 @@ static bool validate_cast_type_and_extract_length(
   /* purecov: end */
 }
 
+/// This function does not store the reference to `type`.
 Item *create_func_cast(THD *thd, const POS &pos, Item *arg,
                        const Cast_type &type, bool as_array) {
   int64_t length = 0;
@@ -1975,6 +1990,8 @@ Item *create_func_cast(THD *thd, const POS &pos, Item *arg,
       return new (thd->mem_root) Item_typecast_time(pos, arg, precision);
     case ITEM_CAST_DATETIME:
       return new (thd->mem_root) Item_typecast_datetime(pos, arg, precision);
+    case ITEM_CAST_YEAR:
+      return new (thd->mem_root) Item_typecast_year(pos, arg);
     case ITEM_CAST_DECIMAL:
       return new (thd->mem_root)
           Item_typecast_decimal(pos, arg, length, precision);
@@ -2062,7 +2079,8 @@ Item *create_temporal_literal(THD *thd, const char *str, size_t length,
           (ltime.time_type == MYSQL_TIMESTAMP_DATETIME ||
            ltime.time_type == MYSQL_TIMESTAMP_DATETIME_TZ) &&
           !status.warnings) {
-        adjust_time_zone_displacement(thd->time_zone(), &ltime);
+        if (convert_time_zone_displacement(thd->time_zone(), &ltime))
+          return nullptr;
         item = new (thd->mem_root) Item_datetime_literal(
             &ltime, status.fractional_digits, thd->time_zone());
       }

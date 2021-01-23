@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2010, 2020, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -89,7 +89,7 @@ class All_THD_visitor_adapter : public Do_THD_Impl {
   All_THD_visitor_adapter(PFS_connection_visitor *visitor)
       : m_visitor(visitor) {}
 
-  virtual void operator()(THD *thd) { m_visitor->visit_THD(thd); }
+  void operator()(THD *thd) override { m_visitor->visit_THD(thd); }
 
  private:
   PFS_connection_visitor *m_visitor;
@@ -156,7 +156,7 @@ class All_host_THD_visitor_adapter : public Do_THD_Impl {
   All_host_THD_visitor_adapter(PFS_connection_visitor *visitor, PFS_host *host)
       : m_visitor(visitor), m_host(host) {}
 
-  virtual void operator()(THD *thd) {
+  void operator()(THD *thd) override {
     PFS_thread *pfs = get_pfs_from_THD(thd);
     pfs = sanitize_thread(pfs);
     if (pfs != nullptr) {
@@ -228,7 +228,7 @@ class All_user_THD_visitor_adapter : public Do_THD_Impl {
   All_user_THD_visitor_adapter(PFS_connection_visitor *visitor, PFS_user *user)
       : m_visitor(visitor), m_user(user) {}
 
-  virtual void operator()(THD *thd) {
+  void operator()(THD *thd) override {
     PFS_thread *pfs = get_pfs_from_THD(thd);
     pfs = sanitize_thread(pfs);
     if (pfs != nullptr) {
@@ -301,7 +301,7 @@ class All_account_THD_visitor_adapter : public Do_THD_Impl {
                                   PFS_account *account)
       : m_visitor(visitor), m_account(account) {}
 
-  virtual void operator()(THD *thd) {
+  void operator()(THD *thd) override {
     PFS_thread *pfs = get_pfs_from_THD(thd);
     pfs = sanitize_thread(pfs);
     if (pfs != nullptr) {
@@ -340,12 +340,6 @@ void PFS_connection_iterator::visit_account(PFS_account *account,
     All_account_THD_visitor_adapter adapter(visitor, account);
     Global_THD_manager::get_instance()->do_for_all_thd(&adapter);
   }
-}
-
-void PFS_connection_iterator::visit_THD(THD *thd,
-                                        PFS_connection_visitor *visitor) {
-  DBUG_ASSERT(visitor != nullptr);
-  visitor->visit_THD(thd);
 }
 
 void PFS_instance_iterator::visit_all(PFS_instance_visitor *visitor) {
@@ -662,7 +656,7 @@ class Proc_all_table_shares : public PFS_buffer_processor<PFS_table_share> {
  public:
   Proc_all_table_shares(PFS_object_visitor *visitor) : m_visitor(visitor) {}
 
-  virtual void operator()(PFS_table_share *pfs) {
+  void operator()(PFS_table_share *pfs) override {
     m_visitor->visit_table_share(pfs);
   }
 
@@ -674,7 +668,7 @@ class Proc_all_table_handles : public PFS_buffer_processor<PFS_table> {
  public:
   Proc_all_table_handles(PFS_object_visitor *visitor) : m_visitor(visitor) {}
 
-  virtual void operator()(PFS_table *pfs) {
+  void operator()(PFS_table *pfs) override {
     PFS_table_share *safe_share = sanitize_table_share(pfs->m_share);
     if (safe_share != nullptr) {
       m_visitor->visit_table(pfs);
@@ -705,7 +699,7 @@ class Proc_one_table_share_handles : public PFS_buffer_processor<PFS_table> {
                                PFS_table_share *share)
       : m_visitor(visitor), m_share(share) {}
 
-  virtual void operator()(PFS_table *pfs) {
+  void operator()(PFS_table *pfs) override {
     if (pfs->m_share == m_share) {
       m_visitor->visit_table(pfs);
     }
@@ -739,7 +733,7 @@ class Proc_one_table_share_indexes : public PFS_buffer_processor<PFS_table> {
                                PFS_table_share *share, uint index)
       : m_visitor(visitor), m_share(share), m_index(index) {}
 
-  virtual void operator()(PFS_table *pfs) {
+  void operator()(PFS_table *pfs) override {
     if (pfs->m_share == m_share) {
       m_visitor->visit_table_index(pfs, m_index);
     }
@@ -1122,7 +1116,7 @@ PFS_connection_memory_visitor::~PFS_connection_memory_visitor() {}
 void PFS_connection_memory_visitor::visit_global() {
   PFS_memory_shared_stat *stat;
   stat = &global_instr_class_memory_array[m_index];
-  memory_full_aggregate(stat, &m_stat);
+  memory_monitoring_aggregate(stat, &m_stat);
 }
 
 void PFS_connection_memory_visitor::visit_host(PFS_host *pfs) {
@@ -1131,7 +1125,7 @@ void PFS_connection_memory_visitor::visit_host(PFS_host *pfs) {
   if (event_name_array != nullptr) {
     const PFS_memory_shared_stat *stat;
     stat = &event_name_array[m_index];
-    memory_full_aggregate(stat, &m_stat);
+    memory_monitoring_aggregate(stat, &m_stat);
   }
 }
 
@@ -1141,7 +1135,7 @@ void PFS_connection_memory_visitor::visit_user(PFS_user *pfs) {
   if (event_name_array != nullptr) {
     const PFS_memory_shared_stat *stat;
     stat = &event_name_array[m_index];
-    memory_full_aggregate(stat, &m_stat);
+    memory_monitoring_aggregate(stat, &m_stat);
   }
 }
 
@@ -1151,7 +1145,7 @@ void PFS_connection_memory_visitor::visit_account(PFS_account *pfs) {
   if (event_name_array != nullptr) {
     const PFS_memory_shared_stat *stat;
     stat = &event_name_array[m_index];
-    memory_full_aggregate(stat, &m_stat);
+    memory_monitoring_aggregate(stat, &m_stat);
   }
 }
 
@@ -1161,7 +1155,7 @@ void PFS_connection_memory_visitor::visit_thread(PFS_thread *pfs) {
   if (event_name_array != nullptr) {
     const PFS_memory_safe_stat *stat;
     stat = &event_name_array[m_index];
-    memory_full_aggregate(stat, &m_stat);
+    memory_monitoring_aggregate(stat, &m_stat);
   }
 }
 

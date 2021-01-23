@@ -2,10 +2,6 @@
 # BUG#20527217 - INNODB: PUT FTS AUXILIARY TABLES INTO THE SAME GENERAL
 #		TABLESPACE AS THE PRIMARY
 #
-#
-# Restart with innodb-directories set to MYSQL_TMP_DIR.
-#
-# restart: --innodb-directories=MYSQL_TMP_DIR
 SET DEFAULT_STORAGE_ENGINE=InnoDB;
 SET GLOBAL innodb_file_per_table = ON;
 SHOW VARIABLES LIKE 'innodb_file_per_table';
@@ -20,11 +16,11 @@ innodb_strict_mode	OFF
 CREATE TABLESPACE s_def ADD DATAFILE 's_def.ibd';
 CREATE TABLESPACE s_zip ADD DATAFILE 's_zip.ibd' FILE_BLOCK_SIZE=2k;
 === information_schema.innodb_tablespaces and innodb_datafiles ===
-Space_Name	Space_Type	Page_Size	Zip_Size	Formats_Permitted	Path
-mtr/global_suppressions	Single	DEFAULT	0	Dynamic	MYSQLD_DATADIR/mtr/global_suppressions.ibd
-mtr/test_suppressions	Single	DEFAULT	0	Dynamic	MYSQLD_DATADIR/mtr/test_suppressions.ibd
-s_def	General	DEFAULT	0	Any	s_def.ibd
-s_zip	General	DEFAULT	2048	Compressed	s_zip.ibd
+Space_Name	Space_Type	Page_Size	Zip_Size	BlockSize!=0	FileSize!=0	Formats_Permitted	Path
+mtr/global_suppressions	Single	DEFAULT	0	1	1	Dynamic	MYSQLD_DATADIR/mtr/global_suppressions.ibd
+mtr/test_suppressions	Single	DEFAULT	0	1	1	Dynamic	MYSQLD_DATADIR/mtr/test_suppressions.ibd
+s_def	General	DEFAULT	0	1	1	Any	s_def.ibd
+s_zip	General	DEFAULT	2048	1	1	Compressed	s_zip.ibd
 === information_schema.files ===
 Space_Name	File_Type	Engine	Status	Tablespace_Name	Path
 mtr/global_suppressions	TABLESPACE	InnoDB	NORMAL	mtr/global_suppressions	MYSQLD_DATADIR/mtr/global_suppressions.ibd
@@ -686,7 +682,7 @@ fts_aux_deleted.ibd
 fts_aux_deleted_cache.ibd
 t1.ibd
 TRUNCATE TABLE t1;
-# restart: --innodb-directories=MYSQL_TMP_DIR
+# restart
 TRUNCATE TABLE t1;
 # list files in REMOTE_DIR after TRUNCATE
 fts_aux_index_1.ibd

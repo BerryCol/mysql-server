@@ -2,12 +2,12 @@
 .\"     Title: \fBmysql_upgrade\fR
 .\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 06/01/2020
+.\"      Date: 11/26/2020
 .\"    Manual: MySQL Database System
 .\"    Source: MySQL 8.0
 .\"  Language: English
 .\"
-.TH "\FBMYSQL_UPGRADE\FR" "1" "06/01/2020" "MySQL 8\&.0" "MySQL Database System"
+.TH "\FBMYSQL_UPGRADE\FR" "1" "11/26/2020" "MySQL 8\&.0" "MySQL Database System"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -51,7 +51,7 @@ As of MySQL 8\&.0\&.16, the MySQL server performs the upgrade tasks previously h
 (for details, see
 Section\ \&2.11.3, \(lqWhat the MySQL Upgrade Process Upgrades\(rq)\&. Consequently,
 \fBmysql_upgrade\fR
-is unneeded and is deprecated as of that version, and will be removed in a future MySQL version\&. Because
+is unneeded and is deprecated as of that version; expect it to be removed in a future version of MySQL\&. Because
 \fBmysql_upgrade\fR
 no longer performs upgrade tasks, it exits with status 0 unconditionally\&.
 .sp .5v
@@ -210,7 +210,7 @@ root
 user\&. If the
 root
 password is expired when you run
-\fBmysql_upgrade\fR, you will see a message that your password is expired and that
+\fBmysql_upgrade\fR, it displays a message that your password is expired and that
 \fBmysql_upgrade\fR
 failed as a result\&. To correct this, reset the
 root
@@ -337,7 +337,7 @@ option\&.
 .PP
 The
 mysql_upgrade_info
-file is deprecated and will be removed in a future MySQL version\&.
+file is deprecated; expect it to be removed in a future version of MySQL\&.
 .sp .5v
 .RE
 .PP
@@ -352,8 +352,8 @@ if the credentials use a hash format compatible with that plugin\&. Rows with a 
 .PP
 \fBmysql_upgrade\fR
 does not upgrade the contents of the time zone tables or help tables\&. For upgrade instructions, see
-Section\ \&5.1.14, \(lqMySQL Server Time Zone Support\(rq, and
-Section\ \&5.1.16, \(lqServer-Side Help Support\(rq\&.
+Section\ \&5.1.15, \(lqMySQL Server Time Zone Support\(rq, and
+Section\ \&5.1.17, \(lqServer-Side Help Support\(rq\&.
 .PP
 Unless invoked with the
 \fB\-\-skip\-sys\-schema\fR
@@ -439,10 +439,10 @@ Section\ \&10.15, \(lqCharacter Set Configuration\(rq\&.
 \fB\-\-compress\fR,
 \fB\-C\fR
 Compress all information sent between the client and the server if possible\&. See
-Section\ \&4.2.6, \(lqConnection Compression Control\(rq\&.
+Section\ \&4.2.8, \(lqConnection Compression Control\(rq\&.
 .sp
-As of MySQL 8\&.0\&.18, this option is deprecated\&. It will be removed in a future MySQL version\&. See
-the section called \(lqLegacy Connection Compression Configuration\(rq\&.
+As of MySQL 8\&.0\&.18, this option is deprecated\&. Expect it to be removed in a future version of MySQL\&. See
+the section called \(lqConfiguring Legacy Connection Compression\(rq\&.
 .RE
 .sp
 .RS 4
@@ -460,7 +460,7 @@ system variable\&. The default value is
 uncompressed\&.
 .sp
 For more information, see
-Section\ \&4.2.6, \(lqConnection Compression Control\(rq\&.
+Section\ \&4.2.8, \(lqConnection Compression Control\(rq\&.
 .sp
 This option was added in MySQL 8\&.0\&.18\&.
 .RE
@@ -823,8 +823,8 @@ Print the program name and all options that it gets from option files\&.
 .IP \(bu 2.3
 .\}
 \fB\-\-protocol={TCP|SOCKET|PIPE|MEMORY}\fR
-The connection protocol to use for connecting to the server\&. It is useful when the other connection parameters normally result in use of a protocol other than the one you want\&. For details on the permissible values, see
-Section\ \&4.2.4, \(lqConnecting to the MySQL Server Using Command Options\(rq\&.
+The transport protocol to use for connecting to the server\&. It is useful when the other connection parameters normally result in use of a protocol other than the one you want\&. For details on the permissible values, see
+Section\ \&4.2.7, \(lqConnection Transport Protocols\(rq\&.
 .RE
 .sp
 .RS 4
@@ -943,7 +943,7 @@ Controls whether to enable FIPS mode on the client side\&. The
 option differs from other
 \fB\-\-ssl\-\fR\fB\fIxxx\fR\fR
 options in that it is not used to establish encrypted connections, but rather to affect which cryptographic operations to permit\&. See
-Section\ \&6.6, \(lqFIPS Support\(rq\&.
+Section\ \&6.8, \(lqFIPS Support\(rq\&.
 .sp
 These
 \fB\-\-ssl\-fips\-mode\fR
@@ -1136,7 +1136,7 @@ zstd
 compression\&.
 .sp
 For more information, see
-Section\ \&4.2.6, \(lqConnection Compression Control\(rq\&.
+Section\ \&4.2.8, \(lqConnection Compression Control\(rq\&.
 .sp
 This option was added in MySQL 8\&.0\&.18\&.
 .RE

@@ -145,8 +145,8 @@
 #include "my_macros.h"
 #include "my_sqlcommand.h"
 #include "my_sys.h"
+#include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/log_builtins.h"
-#include "mysql/psi/psi_base.h"
 #include "mysql/service_mysql_alloc.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
@@ -224,9 +224,9 @@ class Range_optimizer_error_handler : public Internal_error_handler {
   Range_optimizer_error_handler()
       : m_has_errors(false), m_is_mem_error(false) {}
 
-  virtual bool handle_condition(THD *thd, uint sql_errno, const char *,
-                                Sql_condition::enum_severity_level *level,
-                                const char *) {
+  bool handle_condition(THD *thd, uint sql_errno, const char *,
+                        Sql_condition::enum_severity_level *level,
+                        const char *) override {
     if (*level == Sql_condition::SL_ERROR) {
       m_has_errors = true;
       /* Out of memory error is reported only once. Return as handled */
@@ -1287,9 +1287,10 @@ class SEL_TREE {
 
 class RANGE_OPT_PARAM {
  public:
-  THD *thd;     /* Current thread handle */
-  TABLE *table; /* Table being analyzed */
-  Item *cond;   /* Used inside get_mm_tree(). */
+  THD *thd;               /* Current thread handle */
+  TABLE *table;           /* Table being analyzed */
+  SELECT_LEX *select_lex; /* Query block the table is part of */
+  Item *cond;             /* Used inside get_mm_tree(). */
   table_map prev_tables;
   table_map read_tables;
   table_map current_table; /* Bit of the table being analyzed */
@@ -1652,7 +1653,7 @@ SEL_TREE::SEL_TREE(SEL_TREE *arg, RANGE_OPT_PARAM *param)
   for (SEL_IMERGE *el = it++; el; el = it++) {
     SEL_IMERGE *merge = new (param->mem_root) SEL_IMERGE(el, param);
     if (!merge || merge->trees == merge->trees_next || param->has_errors()) {
-      merges.empty();
+      merges.clear();
       return;
     }
     merges.push_back(merge);
@@ -1727,7 +1728,7 @@ inline void imerge_list_and_list(List<SEL_IMERGE> *im1, List<SEL_IMERGE> *im2) {
 static int imerge_list_or_list(RANGE_OPT_PARAM *param, List<SEL_IMERGE> *im1,
                                List<SEL_IMERGE> *im2) {
   SEL_IMERGE *imerge = im1->head();
-  im1->empty();
+  im1->clear();
   im1->push_back(imerge);
 
   return imerge->or_sel_imerge_with_checks(param, im2->head());
@@ -1909,7 +1910,7 @@ QUICK_INDEX_MERGE_SELECT::~QUICK_INDEX_MERGE_SELECT() {
     // Normally it's disabled by dtor of QUICK_RANGE_SELECT, but it can't be
     // done without table's handler
     disable_unique_filter |=
-        head->key_info[quick->index].flags & HA_MULTI_VALUED_KEY;
+        (0 != (head->key_info[quick->index].flags & HA_MULTI_VALUED_KEY));
     quick->file = nullptr;
   }
   quick_selects.delete_elements();
@@ -2022,7 +2023,7 @@ int QUICK_RANGE_SELECT::init_ror_merged_scan(bool reuse_handler) {
 
   head->column_bitmaps_set(&column_bitmap, &column_bitmap);
 
-  if (file->ha_external_lock(thd, F_RDLCK)) goto failure;
+  if (file->ha_external_lock(thd, head->file->get_lock_type())) goto failure;
 
   if (init() || reset()) {
     file->ha_external_lock(thd, F_UNLCK);
@@ -2609,7 +2610,8 @@ class TRP_RANGE : public TABLE_READ_PLAN {
   TRP_RANGE(SEL_ROOT *key_arg, uint idx_arg, uint mrr_flags_arg)
       : key(key_arg), key_idx(idx_arg), mrr_flags(mrr_flags_arg) {}
 
-  QUICK_SELECT_I *make_quick(PARAM *param, bool, MEM_ROOT *parent_alloc) {
+  QUICK_SELECT_I *make_quick(PARAM *param, bool,
+                             MEM_ROOT *parent_alloc) override {
     DBUG_TRACE;
     QUICK_RANGE_SELECT *quick;
     if ((quick = get_quick_select(param, key_idx, key, mrr_flags, mrr_buf_size,
@@ -2621,7 +2623,7 @@ class TRP_RANGE : public TABLE_READ_PLAN {
   }
 
   void trace_basic_info(const PARAM *param,
-                        Opt_trace_object *trace_object) const;
+                        Opt_trace_object *trace_object) const override;
 };
 
 void TRP_RANGE::trace_basic_info(const PARAM *param,
@@ -2684,7 +2686,7 @@ class TRP_ROR_INTERSECT : public TABLE_READ_PLAN {
       : forced_by_hint(forced_by_hint_arg) {}
 
   QUICK_SELECT_I *make_quick(PARAM *param, bool retrieve_full_rows,
-                             MEM_ROOT *parent_alloc);
+                             MEM_ROOT *parent_alloc) override;
 
   /* Array of pointers to ROR range scans used in this intersection */
   ROR_SCAN_INFO **first_scan;
@@ -2694,7 +2696,7 @@ class TRP_ROR_INTERSECT : public TABLE_READ_PLAN {
   Cost_estimate index_scan_cost; /* SUM(cost(index_scan)) */
 
   void trace_basic_info(const PARAM *param,
-                        Opt_trace_object *trace_object) const;
+                        Opt_trace_object *trace_object) const override;
 };
 
 void TRP_ROR_INTERSECT::trace_basic_info(const PARAM *param,
@@ -2746,12 +2748,12 @@ class TRP_ROR_UNION : public TABLE_READ_PLAN {
   explicit TRP_ROR_UNION(bool forced_by_hint_arg)
       : forced_by_hint(forced_by_hint_arg) {}
   QUICK_SELECT_I *make_quick(PARAM *param, bool retrieve_full_rows,
-                             MEM_ROOT *parent_alloc);
+                             MEM_ROOT *parent_alloc) override;
   TABLE_READ_PLAN **first_ror; /* array of ptrs to plans for merged scans */
   TABLE_READ_PLAN **last_ror;  /* end of the above array */
 
   void trace_basic_info(const PARAM *param,
-                        Opt_trace_object *trace_object) const;
+                        Opt_trace_object *trace_object) const override;
 };
 
 void TRP_ROR_UNION::trace_basic_info(const PARAM *param,
@@ -2778,12 +2780,12 @@ class TRP_INDEX_MERGE : public TABLE_READ_PLAN {
   explicit TRP_INDEX_MERGE(bool forced_by_hint_arg)
       : forced_by_hint(forced_by_hint_arg) {}
   QUICK_SELECT_I *make_quick(PARAM *param, bool retrieve_full_rows,
-                             MEM_ROOT *parent_alloc);
+                             MEM_ROOT *parent_alloc) override;
   TRP_RANGE **range_scans;     /* array of ptrs to plans of merged scans */
   TRP_RANGE **range_scans_end; /* end of the array */
 
   void trace_basic_info(const PARAM *param,
-                        Opt_trace_object *trace_object) const;
+                        Opt_trace_object *trace_object) const override;
 };
 
 void TRP_INDEX_MERGE::trace_basic_info(const PARAM *param,
@@ -2834,7 +2836,7 @@ class TRP_GROUP_MIN_MAX : public TABLE_READ_PLAN {
 
  public:
   void trace_basic_info(const PARAM *param,
-                        Opt_trace_object *trace_object) const;
+                        Opt_trace_object *trace_object) const override;
 
   TRP_GROUP_MIN_MAX(bool have_min_arg, bool have_max_arg,
                     bool have_agg_distinct_arg,
@@ -2861,7 +2863,7 @@ class TRP_GROUP_MIN_MAX : public TABLE_READ_PLAN {
         quick_prefix_records(quick_prefix_records_arg) {}
 
   QUICK_SELECT_I *make_quick(PARAM *param, bool retrieve_full_rows,
-                             MEM_ROOT *parent_alloc);
+                             MEM_ROOT *parent_alloc) override;
   void use_index_scan() { is_index_scan = true; }
 };
 
@@ -2925,7 +2927,7 @@ class TRP_SKIP_SCAN : public TABLE_READ_PLAN {
 
  public:
   void trace_basic_info(const PARAM *param,
-                        Opt_trace_object *trace_object) const;
+                        Opt_trace_object *trace_object) const override;
 
   TRP_SKIP_SCAN(KEY *index_info, uint index, SEL_ROOT *index_range_tree,
                 uint eq_prefix_len, uint eq_prefix_parts,
@@ -2945,11 +2947,11 @@ class TRP_SKIP_SCAN : public TABLE_READ_PLAN {
     records = read_records;
   }
 
-  virtual ~TRP_SKIP_SCAN() {}
+  ~TRP_SKIP_SCAN() override {}
 
   QUICK_SELECT_I *make_quick(PARAM *param, bool retrieve_full_rows,
-                             MEM_ROOT *parent_alloc);
-  virtual bool is_forced_by_hint() { return forced_by_hint; }
+                             MEM_ROOT *parent_alloc) override;
+  bool is_forced_by_hint() override { return forced_by_hint; }
 };
 
 void TRP_SKIP_SCAN::trace_basic_info(const PARAM *param,
@@ -3112,7 +3114,7 @@ int test_quick_select(THD *thd, Key_map keys_to_use, table_map prev_tables,
                       const enum_order interesting_order,
                       const QEP_shared_owner *tab, Item *cond,
                       Key_map *needed_reg, QUICK_SELECT_I **quick,
-                      bool ignore_table_scan) {
+                      bool ignore_table_scan, SELECT_LEX *select_lex) {
   DBUG_TRACE;
 
   *quick = nullptr;
@@ -3190,6 +3192,7 @@ int test_quick_select(THD *thd, Key_map keys_to_use, table_map prev_tables,
     param.read_tables = read_tables | INNER_TABLE_BIT;
     param.current_table = head->pos_in_table_list->map();
     param.table = head;
+    param.select_lex = select_lex;
     param.keys = 0;
     param.is_ror_scan = false;
     param.mem_root = &alloc;
@@ -3296,6 +3299,9 @@ int test_quick_select(THD *thd, Key_map keys_to_use, table_map prev_tables,
     /* Calculate cost of full index read for the shortest covering index */
     if (!head->covering_keys.is_clear_all()) {
       int key_for_use = find_shortest_key(head, &head->covering_keys);
+      // find_shortest_key() should return a valid key:
+      assert(key_for_use != MAX_KEY);
+
       Cost_estimate key_read_time = param.table->file->index_scan_cost(
           key_for_use, 1, static_cast<double>(records));
       key_read_time.add_cpu(
@@ -3687,6 +3693,7 @@ static void dbug_print_singlepoint_range(SEL_ARG **start, uint num);
 
   @param      thd            Thread handle
   @param      table          Table to perform partition pruning for
+  @param      select_lex     Query block the table is part of
   @param      pprune_cond    Condition to use for partition pruning
 
   @note This function assumes that lock_partitions are setup when it
@@ -3704,7 +3711,8 @@ static void dbug_print_singlepoint_range(SEL_ARG **start, uint num);
     @retval false Success
 */
 
-bool prune_partitions(THD *thd, TABLE *table, Item *pprune_cond) {
+bool prune_partitions(THD *thd, TABLE *table, SELECT_LEX *select_lex,
+                      Item *pprune_cond) {
   partition_info *part_info = table->part_info;
   DBUG_TRACE;
 
@@ -3761,6 +3769,7 @@ bool prune_partitions(THD *thd, TABLE *table, Item *pprune_cond) {
   dbug_tmp_use_all_columns(table, old_sets, table->read_set, table->write_set);
   range_par->thd = thd;
   range_par->table = table;
+  range_par->select_lex = select_lex;
   /* range_par->cond doesn't need initialization */
   range_par->prev_tables = range_par->read_tables = INNER_TABLE_BIT;
   range_par->current_table = table->pos_in_table_list->map();
@@ -4915,7 +4924,7 @@ static TABLE_READ_PLAN *get_best_disjunct_quick(PARAM *param,
   /* Calculate cost(rowid_to_row_scan) */
   {
     Cost_estimate sweep_cost;
-    JOIN *join = param->thd->lex->select_lex->join;
+    JOIN *join = param->select_lex->join;
     const bool is_interrupted = join && join->tables != 1;
     get_sweep_read_cost(param->table, non_cpk_scan_records, is_interrupted,
                         &sweep_cost);
@@ -5050,7 +5059,7 @@ skip_to_ror_scan:
   */
   Cost_estimate roru_total_cost;
   {
-    JOIN *join = param->thd->lex->select_lex->join;
+    JOIN *join = param->select_lex->join;
     const bool is_interrupted = join && join->tables != 1;
     get_sweep_read_cost(param->table, roru_total_records, is_interrupted,
                         &roru_total_cost);
@@ -5611,7 +5620,7 @@ static bool ror_intersect_add(ROR_INTERSECT_INFO *info, ROR_SCAN_INFO *ror_scan,
 
   if (!info->is_covering) {
     Cost_estimate sweep_cost;
-    JOIN *join = info->param->thd->lex->select_lex->join;
+    JOIN *join = info->param->select_lex->join;
     const bool is_interrupted = join && join->tables != 1;
 
     get_sweep_read_cost(info->param->table, double2rows(info->out_rows),
@@ -6253,6 +6262,9 @@ static SEL_TREE *get_func_mm_tree_from_in_predicate(RANGE_OPT_PARAM *param,
                                                     bool is_negated) {
   if (param->has_errors()) return nullptr;
 
+  // Populate array as we need to examine its values here
+  if (op->array && !op->populated) op->populate_bisection(param->thd);
+
   if (is_negated) {
     // We don't support row constructors (multiple columns on lhs) here.
     if (predicand->type() != Item::FIELD_ITEM) return nullptr;
@@ -6341,7 +6353,28 @@ static SEL_TREE *get_func_mm_tree_from_in_predicate(RANGE_OPT_PARAM *param,
                 ((last_val = tree->keys[idx]->root->last()))) {
               SEL_ARG *new_interval = tree2->keys[idx]->root;
               new_interval->min_value = last_val->max_value;
-              new_interval->min_flag = NEAR_MIN;
+              // We set the max value of the previous range as the beginning
+              // for this range interval. However we need values higher than
+              // this value:
+              // For ex: If the range is "not in (1,2)" we first construct
+              // X < 1 before this loop and add 1 < X < 2 in this loop and
+              // follow it up with X > 2 below.
+              // While fetching values for the second interval, we set
+              // "NEAR_MIN" flag so that we fetch values higher than "1".
+              // However, when the values specified are not compatible
+              // with the field that is being compared to, they are rounded
+              // off.
+              // For the example above, if the range given was "not in (0.9,
+              // 1.9)", range optimizer rounds of the values to (1,2). In such
+              // a case, setting the flag to "NEAR_MIN" is not right. Because
+              // we need values higher than "0.9" not "1". We check this
+              // before we set the flag below.
+              Item_basic_constant *val_item =
+                  op->array->create_item(param->old_root);
+              op->array->value_to_item(i - 1, val_item);
+              const int cmp_value =
+                  stored_field_cmp_to_item(param->thd, field, val_item);
+              if (cmp_value <= 0) new_interval->min_flag = NEAR_MIN;
 
               /*
                 If the interval is over a partial keypart, the
@@ -6632,7 +6665,7 @@ static SEL_TREE *get_func_mm_tree(RANGE_OPT_PARAM *param, Item *predicand,
       }
       break;
     case Item_func::IN_FUNC: {
-      Item_func_in *in_pred = static_cast<Item_func_in *>(cond_func);
+      Item_func_in *in_pred = down_cast<Item_func_in *>(cond_func);
       tree = get_func_mm_tree_from_in_predicate(param, predicand, in_pred, inv);
     } break;
     case Item_func::JSON_CONTAINS:
@@ -7219,6 +7252,7 @@ static SEL_TREE *get_mm_parts(RANGE_OPT_PARAM *param, Item_func *cond_func,
   @param [out] impossible_cond_cause Set to a descriptive string if an
                                     impossible condition is found.
   @param memroot                    Memroot for creation of new SEL_ARG.
+  @param select_lex                 Query block the field is part of
 
   @retval false  if saving went fine and it makes sense to continue
                  optimizing for this predicate.
@@ -7231,7 +7265,8 @@ static bool save_value_and_handle_conversion(SEL_ROOT **tree, Item *value,
                                              const Item_func::Functype comp_op,
                                              Field *field,
                                              const char **impossible_cond_cause,
-                                             MEM_ROOT *memroot) {
+                                             MEM_ROOT *memroot,
+                                             SELECT_LEX *select_lex) {
   // A SEL_ARG should not have been created for this predicate yet.
   DBUG_ASSERT(*tree == nullptr);
 
@@ -7253,9 +7288,8 @@ static bool save_value_and_handle_conversion(SEL_ROOT **tree, Item *value,
     we only want to disable subquery evaluation during optimization, so check if
     we're in the optimization phase by calling SELECT_LEX_UNIT::is_optimized().
   */
-  const SELECT_LEX *const select = thd->lex->current_select();
-  if (!select->master_unit()->is_optimized() &&
-      !evaluate_during_optimization(value, select))
+  if (!select_lex->master_unit()->is_optimized() &&
+      !evaluate_during_optimization(value, select_lex))
     return true;
 
   // For comparison purposes allow invalid dates like 2000-01-32
@@ -7662,7 +7696,8 @@ static SEL_ROOT *get_mm_leaf(RANGE_OPT_PARAM *param, Item *conf_func,
     }
 
     bool always_true_or_false = save_value_and_handle_conversion(
-        &tree, value, type, field, &impossible_cond_cause, alloc);
+        &tree, value, type, field, &impossible_cond_cause, alloc,
+        param->select_lex);
 
     if (field->type() == MYSQL_TYPE_GEOMETRY &&
         save_geom_type != Field::GEOM_GEOMETRY) {
@@ -8034,7 +8069,7 @@ static SEL_TREE *tree_or(RANGE_OPT_PARAM *param, SEL_TREE *tree1,
     for (uint i = 0; i < param->keys; i++)
       if (tree1->keys[i] != NULL &&
           tree1->keys[i]->type == SEL_ROOT::Type::KEY_RANGE) {
-        tree1->merges.empty();
+        tree1->merges.clear();
         break;
       }
   }
@@ -8042,7 +8077,7 @@ static SEL_TREE *tree_or(RANGE_OPT_PARAM *param, SEL_TREE *tree1,
     for (uint i = 0; i < param->keys; i++)
       if (tree2->keys[i] != NULL &&
           tree2->keys[i]->type == SEL_ROOT::Type::KEY_RANGE) {
-        tree2->merges.empty();
+        tree2->merges.clear();
         break;
       }
   }
@@ -10557,8 +10592,9 @@ int QUICK_INDEX_MERGE_SELECT::read_keys_and_merge() {
   /* index_merge currently doesn't support "using index" at all */
   head->set_keyread(false);
   read_record.reset();  // Clear out any previous iterator.
-  read_record = init_table_iterator(thd, head, nullptr, true,
-                                    /*ignore_not_found_rows=*/false);
+  read_record = init_table_iterator(thd, head, nullptr,
+                                    /*ignore_not_found_rows=*/false,
+                                    /*count_examined_rows=*/false);
   if (read_record == nullptr) return 1;
   return result;
 }
@@ -11645,7 +11681,7 @@ static void cost_group_min_max(TABLE *table, uint key, uint used_key_parts,
 static TRP_GROUP_MIN_MAX *get_best_group_min_max(
     PARAM *param, SEL_TREE *tree, const Cost_estimate *cost_est) {
   THD *thd = param->thd;
-  JOIN *join = thd->lex->current_select()->join;
+  JOIN *join = param->select_lex->join;
   TABLE *table = param->table;
   bool have_min = false; /* true if there is a MIN function. */
   bool have_max = false; /* true if there is a MAX function. */
@@ -11661,17 +11697,14 @@ static TRP_GROUP_MIN_MAX *get_best_group_min_max(
   TRP_GROUP_MIN_MAX *read_plan = nullptr; /* The eventually constructed TRP. */
   uint key_part_nr;
   ORDER *tmp_group;
-  Item *item;
   Item_field *item_field;
   bool is_agg_distinct;
-  List<Item_field> agg_distinct_flds;
   /* Cost-related variables for the best index so far. */
   Cost_estimate best_read_cost;
   ha_rows best_records = 0;
   SEL_ROOT *best_index_tree = nullptr;
   ha_rows best_quick_prefix_records = 0;
   uint best_param_idx = 0;
-  List_iterator<Item> select_items_it;
   Opt_trace_context *const trace = &param->thd->opt_trace;
 
   DBUG_TRACE;
@@ -11698,6 +11731,7 @@ static TRP_GROUP_MIN_MAX *get_best_group_min_max(
   }
 
   /* Check (SA1,SA4) and store the only MIN/MAX argument - the C attribute.*/
+  mem_root_deque<Item_field *> agg_distinct_flds(thd->mem_root);
   is_agg_distinct = is_indexed_agg_distinct(join, &agg_distinct_flds);
 
   if (join->group_list.empty() && /* Neither GROUP BY nor a DISTINCT query. */
@@ -11779,11 +11813,10 @@ static TRP_GROUP_MIN_MAX *get_best_group_min_max(
     return nullptr;
   }
 
-  select_items_it = List_iterator<Item>(join->fields_list);
   /* Check (SA5). */
   if (join->select_distinct) {
     trace_group.add("distinct_query", true);
-    while ((item = select_items_it++)) {
+    for (Item *item : VisibleFields(*join->fields)) {
       if (item->real_item()->type() != Item::FIELD_ITEM) return nullptr;
     }
   }
@@ -11907,14 +11940,15 @@ static TRP_GROUP_MIN_MAX *get_best_group_min_max(
     */
     if ((join->group_list.empty() && join->select_distinct) ||
         is_agg_distinct) {
-      if (!is_agg_distinct) {
-        select_items_it.rewind();
-      }
+      auto agg_distinct_flds_it = agg_distinct_flds.begin();
+      auto select_items_it = join->fields->begin();
+      while (is_agg_distinct ? (agg_distinct_flds_it != agg_distinct_flds.end())
+                             : (select_items_it != join->fields->end())) {
+        Item *item =
+            (is_agg_distinct ? static_cast<Item *>(*agg_distinct_flds_it++)
+                             : *select_items_it++);
+        if (item->hidden) continue;
 
-      List_iterator<Item_field> agg_distinct_flds_it(agg_distinct_flds);
-      while (nullptr !=
-             (item = (is_agg_distinct ? (Item *)agg_distinct_flds_it++
-                                      : select_items_it++))) {
         /* (SA5) already checked above. */
         item_field = (Item_field *)item->real_item();
         DBUG_ASSERT(item->real_item()->type() == Item::FIELD_ITEM);
@@ -11933,7 +11967,8 @@ static TRP_GROUP_MIN_MAX *get_best_group_min_max(
         */
         if (used_key_parts_map.is_set(key_part_nr)) continue;
         if (key_part_nr < 1 ||
-            (!is_agg_distinct && key_part_nr > join->fields_list.elements)) {
+            (!is_agg_distinct &&
+             key_part_nr > CountVisibleFields(*join->fields))) {
           cause = "select_attribute_not_prefix_in_index";
           goto next_index;
         }
@@ -12910,7 +12945,7 @@ QUICK_SELECT_I *TRP_GROUP_MIN_MAX::make_quick(PARAM *param, bool,
   DBUG_TRACE;
 
   quick = new QUICK_GROUP_MIN_MAX_SELECT(
-      param->table, param->thd->lex->current_select()->join, have_min, have_max,
+      param->table, param->select_lex->join, have_min, have_max,
       have_agg_distinct, min_max_arg_part, group_prefix_len, group_key_parts,
       used_key_parts, index_info, index, &cost_est, records, key_infix_len,
       parent_alloc, is_index_scan);
@@ -14254,9 +14289,9 @@ QUICK_SELECT_I *TRP_SKIP_SCAN::make_quick(PARAM *param, bool,
   DBUG_TRACE;
 
   quick = new QUICK_SKIP_SCAN_SELECT(
-      param->table, param->thd->lex->current_select()->join, index_info, index,
-      range_key_part, index_range_tree, eq_prefix_len, eq_prefix_parts,
-      used_key_parts, &cost_est, records, parent_alloc, has_aggregate_function);
+      param->table, param->select_lex->join, index_info, index, range_key_part,
+      index_range_tree, eq_prefix_len, eq_prefix_parts, used_key_parts,
+      &cost_est, records, parent_alloc, has_aggregate_function);
 
   if (!quick) return nullptr;
 
@@ -14326,8 +14361,7 @@ static void cost_skip_scan(TABLE *table, uint key, uint distinct_key_parts,
 
 static TRP_SKIP_SCAN *get_best_skip_scan(PARAM *param, SEL_TREE *tree,
                                          bool force_skip_scan) {
-  THD *thd = param->thd;
-  JOIN *join = thd->lex->current_select()->join;
+  JOIN *join = param->select_lex->join;
   TABLE *table = param->table;
   const char *cause = nullptr;
   TRP_SKIP_SCAN *read_plan = nullptr;
@@ -15706,6 +15740,8 @@ static void print_multiple_key_values(KEY_PART *key_part, const uchar *key,
 
   for (; key < key_end; key += store_length, key_part++) {
     Field *field = key_part->field;
+    if (field->is_array())
+      field = (down_cast<Field_typed_array *>(field))->get_conv_field();
     store_length = key_part->store_length;
 
     if (field->is_nullable()) {

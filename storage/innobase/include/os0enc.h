@@ -1,6 +1,6 @@
 /***********************************************************************
 
-Copyright (c) 2019, 2020, Oracle and/or its affiliates.
+Copyright (c) 2019, 2020 Oracle and/or its affiliates. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -105,7 +105,7 @@ class Encryption {
   static constexpr size_t INFO_MAX_SIZE = INFO_SIZE + sizeof(uint32);
 
   /** Default master key id for bootstrap */
-  static constexpr size_t DEFAULT_MASTER_KEY_ID = 0;
+  static constexpr uint32_t DEFAULT_MASTER_KEY_ID = 0;
 
   /** (De)Encryption Operation information size */
   static constexpr size_t OPERATION_INFO_SIZE = 1;
@@ -194,13 +194,14 @@ class Encryption {
   @param[in]      master_key_id master key id
   @param[in]      srv_uuid      uuid of server instance
   @param[in,out]  master_key    master key */
-  static void get_master_key(ulint master_key_id, char *srv_uuid,
+  static void get_master_key(uint32_t master_key_id, char *srv_uuid,
                              byte **master_key) noexcept;
 
   /** Get current master key and key id.
   @param[in,out]  master_key_id master key id
   @param[in,out]  master_key    master key */
-  static void get_master_key(ulint *master_key_id, byte **master_key) noexcept;
+  static void get_master_key(uint32_t *master_key_id,
+                             byte **master_key) noexcept;
 
   /** Fill the encryption information.
   @param[in]      key           encryption key
@@ -304,6 +305,12 @@ class Encryption {
   @return encryption type **/
   Type get_type() const;
 
+  /** Check if the encryption algorithm is NONE.
+  @return true if no algorithm is set, false otherwise. */
+  bool is_none() const noexcept MY_ATTRIBUTE((warn_unused_result)) {
+    return m_type == NONE;
+  }
+
   /** Set encryption type
   @param[in]  type  encryption type **/
   void set_type(Type type);
@@ -334,9 +341,20 @@ class Encryption {
 
   /** Get master key id
   @return master key id **/
-  static ulint get_master_key_id();
+  static uint32_t get_master_key_id();
 
  private:
+  /** Encrypt the page data contents. Page type can't be
+  FIL_PAGE_ENCRYPTED, FIL_PAGE_COMPRESSED_AND_ENCRYPTED,
+  FIL_PAGE_ENCRYPTED_RTREE.
+  @param[in]  src       page data which need to encrypt
+  @param[in]  src_len   size of the source in bytes
+  @param[in,out]  dst       destination area
+  @param[in,out]  dst_len   size of the destination in bytes
+  @return true if operation successful, false otherwise. */
+  bool encrypt_low(byte *src, ulint src_len, byte *dst, ulint *dst_len) noexcept
+      MY_ATTRIBUTE((warn_unused_result));
+
   /** Encrypt type */
   Type m_type;
 
@@ -350,7 +368,7 @@ class Encryption {
   byte *m_iv;
 
   /** Current master key id */
-  static ulint s_master_key_id;
+  static uint32_t s_master_key_id;
 
   /** Current uuid of server instance */
   static char s_uuid[SERVER_UUID_LEN + 1];

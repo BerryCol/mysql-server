@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2010, 2020, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -615,32 +615,60 @@ void PFS_account::rebase_memory_stats() {
   }
 }
 
-void PFS_account::carry_memory_stat_delta(PFS_memory_stat_delta *delta,
-                                          uint index) {
+void PFS_account::carry_memory_stat_alloc_delta(
+    PFS_memory_stat_alloc_delta *delta, uint index) {
   PFS_memory_shared_stat *event_name_array;
   PFS_memory_shared_stat *stat;
-  PFS_memory_stat_delta delta_buffer;
-  PFS_memory_stat_delta *remaining_delta;
+  PFS_memory_stat_alloc_delta delta_buffer;
+  PFS_memory_stat_alloc_delta *remaining_delta;
 
   event_name_array = write_instr_class_memory_stats();
   stat = &event_name_array[index];
-  remaining_delta = stat->apply_delta(delta, &delta_buffer);
+  remaining_delta = stat->apply_alloc_delta(delta, &delta_buffer);
 
   if (remaining_delta == nullptr) {
     return;
   }
 
   if (m_user != nullptr) {
-    m_user->carry_memory_stat_delta(remaining_delta, index);
+    m_user->carry_memory_stat_alloc_delta(remaining_delta, index);
     /* do not return, need to process m_host below */
   }
 
   if (m_host != nullptr) {
-    m_host->carry_memory_stat_delta(remaining_delta, index);
+    m_host->carry_memory_stat_alloc_delta(remaining_delta, index);
     return;
   }
 
-  carry_global_memory_stat_delta(remaining_delta, index);
+  carry_global_memory_stat_alloc_delta(remaining_delta, index);
+}
+
+void PFS_account::carry_memory_stat_free_delta(
+    PFS_memory_stat_free_delta *delta, uint index) {
+  PFS_memory_shared_stat *event_name_array;
+  PFS_memory_shared_stat *stat;
+  PFS_memory_stat_free_delta delta_buffer;
+  PFS_memory_stat_free_delta *remaining_delta;
+
+  event_name_array = write_instr_class_memory_stats();
+  stat = &event_name_array[index];
+  remaining_delta = stat->apply_free_delta(delta, &delta_buffer);
+
+  if (remaining_delta == nullptr) {
+    return;
+  }
+
+  if (m_user != nullptr) {
+    m_user->carry_memory_stat_free_delta(remaining_delta, index);
+    /* do not return, need to process m_host below */
+  }
+
+  if (m_host != nullptr) {
+    m_host->carry_memory_stat_free_delta(remaining_delta, index);
+    return;
+  }
+
+  carry_global_memory_stat_free_delta(remaining_delta, index);
 }
 
 PFS_account *sanitize_account(PFS_account *unsafe) {
@@ -682,7 +710,7 @@ class Proc_purge_account : public PFS_buffer_processor<PFS_account> {
  public:
   Proc_purge_account(PFS_thread *thread) : m_thread(thread) {}
 
-  virtual void operator()(PFS_account *pfs) {
+  void operator()(PFS_account *pfs) override {
     PFS_user *user = sanitize_user(pfs->m_user);
     PFS_host *host = sanitize_host(pfs->m_host);
     pfs->aggregate(true, user, host);
@@ -712,7 +740,7 @@ class Proc_update_accounts_derived_flags
  public:
   Proc_update_accounts_derived_flags(PFS_thread *thread) : m_thread(thread) {}
 
-  virtual void operator()(PFS_account *pfs) {
+  void operator()(PFS_account *pfs) override {
     if (pfs->m_username_length > 0 && pfs->m_hostname_length > 0) {
       lookup_setup_actor(m_thread, pfs->m_username, pfs->m_username_length,
                          pfs->m_hostname, pfs->m_hostname_length,

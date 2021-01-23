@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2017, 2019, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2017, 2020, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -42,6 +42,9 @@
 #include <unistd.h>
 #endif
 
+#include "mysql/harness/net_ts/local.h"
+#include "mysql/harness/net_ts/win32_named_pipe.h"
+#include "mysql/harness/stdx/expected.h"
 #include "router_test_helpers.h"
 #include "temp_dir.h"
 
@@ -55,13 +58,21 @@ using mysql_harness::Path;
  **/
 class ProcessManager {
  public:
+#ifdef _WIN32
+  using wait_socket_t = local::byte_protocol::acceptor;
+  using notify_socket_t = local::byte_protocol::socket;
+#else
+  using wait_socket_t = local::datagram_protocol::socket;
+  using notify_socket_t = local::datagram_protocol::socket;
+#endif
+
   /**
    * set origin path.
    */
   static void set_origin(const Path &dir);
 
  protected:
-  virtual ~ProcessManager() {}
+  virtual ~ProcessManager() = default;
 
   /**
    * shutdown all managed processes.
@@ -120,13 +131,19 @@ class ProcessManager {
    * stream should be included in the output caught from the process
    * @param   with_sudo    bool flag indicating if the process' should be
    * execute with sudo priviledges
+   * @param wait_for_notify_ready
+   *        if >=0 the method should use the notification socket and the value
+   * is the time in milliseconds - how long the it should wait for the process
+   * to notify it is ready. if < 0 is should not use (open) the notification
+   * socket to wait for ready notification
    *
    * @returns handle to the launched proccess
    */
-  ProcessWrapper &launch_router(const std::vector<std::string> &params,
-                                int expected_exit_code = 0,
-                                bool catch_stderr = true,
-                                bool with_sudo = false);
+  ProcessWrapper &launch_router(
+      const std::vector<std::string> &params, int expected_exit_code = 0,
+      bool catch_stderr = true, bool with_sudo = false,
+      std::chrono::milliseconds wait_for_notify_ready =
+          std::chrono::seconds(5));
 
   /** @brief Launches the MySQLServerMock process.
    *
@@ -143,6 +160,9 @@ class ProcessManager {
    *                  connections
    * @param module_prefix base-path for javascript modules used by the tests
    * @param bind_address listen address for the mock server to bind to
+   * @param wait_for_notify_ready if >=0 time in milliseconds - how long the
+   * launching command should wait for the process to notify it is ready.
+   * Otherwise the caller does not want to wait for the notification.
    *
    * @returns handle to the launched proccess
    */
@@ -150,6 +170,24 @@ class ProcessManager {
       const std::string &json_file, unsigned port, int expected_exit_code = 0,
       bool debug_mode = false, uint16_t http_port = 0, uint16_t x_port = 0,
       const std::string &module_prefix = "",
+      const std::string &bind_address = "0.0.0.0",
+      std::chrono::milliseconds wait_for_notify_ready =
+          std::chrono::seconds(5));
+
+  /**
+   * launch mysql_server_mock from cmdline args.
+   */
+  ProcessWrapper &launch_mysql_server_mock(
+      const std::vector<std::string> &server_params, int expected_exit_code = 0,
+      std::chrono::milliseconds wait_for_notify_ready =
+          std::chrono::seconds(5));
+
+  /**
+   * build cmdline args for mysql_server_mock.
+   */
+  std::vector<std::string> mysql_server_mock_cmdline_args(
+      const std::string &json_file, uint16_t port, uint16_t http_port = 0,
+      uint16_t x_port = 0, const std::string &module_prefix = "",
       const std::string &bind_address = "0.0.0.0");
 
   /** @brief Launches a process.
@@ -159,13 +197,35 @@ class ProcessManager {
    * executable
    * @param catch_stderr  if true stderr will also be captured (combined with
    * stdout)
+   * @param env_vars      environment variables that shoould be passed to the
+   * process
+   *
+   * @returns handle to the launched proccess
+   */
+  ProcessWrapper &launch_command(
+      const std::string &command, const std::vector<std::string> &params,
+      int expected_exit_code, bool catch_stderr,
+      std::vector<std::pair<std::string, std::string>> env_vars);
+
+  /** @brief Launches a process.
+   *
+   * @param command       path to executable
+   * @param params        array of commanline parameters to pass to the
+   * executable
+   * @param catch_stderr  if true stderr will also be captured (combined with
+   * stdout)
+   * @param wait_notified_ready if >=0 time in milliseconds - how long the
+   * launching command should wait for the process to notify it is ready.
+   * Otherwise the caller does not want to wait for the notification.
    *
    * @returns handle to the launched proccess
    */
   ProcessWrapper &launch_command(const std::string &command,
                                  const std::vector<std::string> &params,
                                  int expected_exit_code = 0,
-                                 bool catch_stderr = true);
+                                 bool catch_stderr = true,
+                                 std::chrono::milliseconds wait_notified_ready =
+                                     std::chrono::milliseconds(-1));
 
   /** @brief Gets path to the directory containing testing data
    *         (conf files, json files).
@@ -220,6 +280,8 @@ class ProcessManager {
 
   void set_mysqlrouter_exec(const Path &path) { mysqlrouter_exec_ = path; }
 
+  std::string get_test_temp_dir_name() const { return test_dir_.name(); }
+
  protected:
   /** @brief returns a [DEFAULT] section as string
    *
@@ -228,6 +290,15 @@ class ProcessManager {
    */
   std::string make_DEFAULT_section(
       const std::map<std::string, std::string> *params) const;
+
+  stdx::expected<void, std::error_code> wait_for_notified(
+      wait_socket_t &sock, const std::string &expected_notification,
+      std::chrono::milliseconds timeout);
+
+  stdx::expected<void, std::error_code> wait_for_notified_ready(
+      wait_socket_t &sock, std::chrono::milliseconds timeout);
+  stdx::expected<void, std::error_code> wait_for_notified_stopping(
+      wait_socket_t &sock, std::chrono::milliseconds timeout);
 
  private:
   void check_port(bool should_be_ready, ProcessWrapper &process, uint16_t port,
@@ -241,6 +312,7 @@ class ProcessManager {
   static Path mysqlserver_mock_exec_;
 
   TempDirectory logging_dir_;
+  TempDirectory test_dir_;
 
   std::list<std::tuple<ProcessWrapper, int>> processes_;
 };

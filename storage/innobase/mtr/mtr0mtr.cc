@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2020, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1995, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -171,6 +171,37 @@ struct Find_page {
   mtr_memo_slot_t *m_slot;
 };
 
+#ifdef UNIV_DEBUG
+struct Mtr_memo_contains {
+  Mtr_memo_contains(const mtr_t *mtr, mtr_memo_type_t type)
+      : m_mtr(mtr), m_type(type) {}
+
+  /** Check if the object in the given slot is of the correct type
+  and then check if it is contained in the mtr.
+  @retval true if the object in the slot is not of required type.
+  os is of the required type, but is not contained in the mtr.
+  @retval false if the object in the slot is of the required type
+                and it is contained in the mtr. */
+  bool operator()(mtr_memo_slot_t *slot) {
+    if (slot->type != m_type) {
+      return true;
+    }
+    return !mtr_memo_contains(m_mtr, slot->object, m_type);
+  }
+
+ private:
+  const mtr_t *m_mtr;
+  mtr_memo_type_t m_type;
+};
+
+bool mtr_t::conflicts_with(const mtr_t *mtr2) const {
+  Mtr_memo_contains check(mtr2, MTR_MEMO_MODIFY);
+  Iterate<Mtr_memo_contains> iterator(check);
+
+  return (!m_impl.m_memo.for_each_block_in_reverse(iterator));
+}
+#endif /* UNIV_DEBUG */
+
 /** Release latches and decrement the buffer fix count.
 @param[in]	slot	memo slot */
 static void memo_slot_release(mtr_memo_slot_t *slot) {
@@ -186,8 +217,10 @@ static void memo_slot_release(mtr_memo_slot_t *slot) {
 #ifndef UNIV_HOTBACKUP
       block = reinterpret_cast<buf_block_t *>(slot->object);
 
-      buf_block_unfix(block);
       buf_page_release_latch(block, slot->type);
+      /* The buf_page_release_latch(block,..) call was last action dereferencing
+      the `block`, so we can unfix the `block` now, but not sooner.*/
+      buf_block_unfix(block);
 #endif /* !UNIV_HOTBACKUP */
       break;
 
@@ -304,7 +337,7 @@ class mtr_t::Command {
  public:
   /** Constructor.
   Takes ownership of the mtr->m_impl, is responsible for deleting it.
-  @param[in,out]	mtr	mini-transaction */
+  @param[in,out]	mtr	Mini-transaction */
   explicit Command(mtr_t *mtr) : m_locks_released() { init(mtr); }
 
   void init(mtr_t *mtr) {
@@ -424,7 +457,7 @@ bool mtr_t::is_block_dirtied(const buf_block_t *block) {
   /* It is OK to read oldest_modification because no
   other thread can be performing a write of it and it
   is only during write that the value is reset to 0. */
-  return (block->page.oldest_modification == 0);
+  return !block->page.is_dirty();
 }
 
 #ifndef UNIV_HOTBACKUP
@@ -605,7 +638,9 @@ void mtr_t::commit() {
 }
 
 #ifndef UNIV_HOTBACKUP
+
 /** Acquire a tablespace X-latch.
+NOTE: use mtr_x_lock_space().
 @param[in]	space		tablespace instance
 @param[in]	file		file name from where called
 @param[in]	line		line number in file */
@@ -746,10 +781,8 @@ the resources. */
 void mtr_t::Command::execute() {
   ut_ad(m_impl->m_log_mode != MTR_LOG_NONE);
 
-  ulint len;
-
 #ifndef UNIV_HOTBACKUP
-  len = prepare_write();
+  ulint len = prepare_write();
 
   if (len > 0) {
     mtr_write_log_t write_log;
@@ -863,9 +896,6 @@ int mtr_t::Logging::disable(THD *) {
 
   clone_mark_active();
 
-  /* Reset sync LSN if beyond current system LSN. */
-  reset_buf_flush_sync_lsn();
-
   return (0);
 }
 
@@ -908,7 +938,8 @@ int mtr_t::Logging::wait_no_log_mtr(THD *thd) {
 #ifdef UNIV_DEBUG
 /** Check if memo contains the given item.
 @return	true if contains */
-bool mtr_t::memo_contains(mtr_buf_t *memo, const void *object, ulint type) {
+bool mtr_t::memo_contains(const mtr_buf_t *memo, const void *object,
+                          ulint type) {
   Find find(object, type);
   Iterate<Find> iterator(find);
 

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2011, 2020, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2011, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -3304,7 +3304,7 @@ public:
      m_workerNo(0)
   {}
 
-  virtual ~InitialReceiverIdIterator() {}
+  ~InitialReceiverIdIterator() override {}
   
   /**
    * Get next batch of receiver ids. 
@@ -3312,9 +3312,9 @@ public:
    * put in the buffer (0 if end has been reached.)
    * @return Array of receiver ids (or NULL if end reached.
    */
-  virtual const Uint32* getNextWords(Uint32& sz);
+  const Uint32* getNextWords(Uint32& sz) override;
 
-  virtual void reset()
+  void reset() override
   { m_workerNo = 0;}
   
 private:
@@ -3374,7 +3374,7 @@ public:
      m_currWorkerNo(0)
   {}
 
-  virtual ~FetchMoreTcIdIterator() {}
+  ~FetchMoreTcIdIterator() override {}
   
   /**
    * Get next batch of receiver ids. 
@@ -3382,9 +3382,9 @@ public:
    * put in the buffer (0 if end has been reached.)
    * @return Array of receiver ids (or NULL if end reached.
    */
-  virtual const Uint32* getNextWords(Uint32& sz);
+  const Uint32* getNextWords(Uint32& sz) override;
 
-  virtual void reset()
+  void reset() override
   { m_currWorkerNo = 0;}
   
 private:
@@ -3478,7 +3478,15 @@ NdbQueryImpl::doSend(int nodeId, bool lastFlag)
   {
     Uint32 scan_flags = 0;  // TODO: Specify with ScanOptions::SO_SCANFLAGS
 
-    bool tupScan = (scan_flags & NdbScanOperation::SF_TupScan);
+    // The number of acc-scans are limited therefore use tup-scans instead.
+    bool tupScan = (scan_flags & NdbScanOperation::SF_TupScan) || true;
+#if defined(VM_TRACE)
+    if (ndb.theImpl->forceAccTableScans)
+    {
+      tupScan = false;
+    }
+#endif
+
     bool rangeScan = false;
 
     /* Handle IndexScan specifics */

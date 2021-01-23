@@ -26,6 +26,7 @@
 #include <thread>
 
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 #include "mock_server_rest_client.h"
 #include "mock_server_testutils.h"
@@ -207,12 +208,14 @@ class RouterRoutingStrategyTest : public RouterComponentTest {
                                        const std::string &routing_section,
                                        bool expect_error = false) {
     auto def_section = get_DEFAULT_defaults();
+
     // launch the router with the static routing configuration
     const std::string conf_file =
         create_config_file(conf_dir, routing_section, &def_section);
     const int expected_exit_code = expect_error ? EXIT_FAILURE : EXIT_SUCCESS;
     auto &router =
-        ProcessManager::launch_router({"-c", conf_file}, expected_exit_code);
+        ProcessManager::launch_router({"-c", conf_file}, expected_exit_code,
+                                      true, false, expect_error ? -1s : 5s);
 
     return router;
   }
@@ -606,13 +609,16 @@ TEST_P(RouterRoutingStrategyTestFirstAvailable,
   connect_client_and_query_port(router_port, node_port, /*should_fail=*/true);
   EXPECT_EQ("", node_port);
 
-  // bring back 1st server
+  SCOPED_TRACE("// bring back 1st server on port " +
+               std::to_string(server_ports[0]));
   server_instances.emplace_back(
       &launch_standalone_server(server_ports[0], get_data_dir().str()));
   ASSERT_NO_FATAL_FAILURE(check_port_ready(
       *server_instances[server_instances.size() - 1], server_ports[0]));
-  // we should now succesfully connect to this server
-  connect_client_and_query_port(router_port, node_port);
+  SCOPED_TRACE("// we should now succesfully connect to server on port " +
+               std::to_string(server_ports[0]));
+  ASSERT_NO_FATAL_FAILURE(
+      connect_client_and_query_port(router_port, node_port));
   EXPECT_EQ(std::to_string(server_ports[0]), node_port);
 }
 

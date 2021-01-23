@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2017, 2020, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -844,7 +844,7 @@ lsn_t Arch_File_Ctx::purge(lsn_t begin_lsn, lsn_t end_lsn, lsn_t purge_lsn) {
 
     if (success) {
       /** Removes the deleted file from reset info, thereby incrementing the
-       * iterator. */
+       iterator. */
       it = m_reset.erase(it);
     } else {
       ut_ad(0);
@@ -1329,8 +1329,8 @@ bool Arch_Block::add_page(buf_page_t *page, Arch_Page_Pos *pos) {
 
   /* Update oldest LSN from page. */
   if (arch_page_sys->get_latest_stop_lsn() > m_oldest_lsn ||
-      m_oldest_lsn > page->oldest_modification) {
-    m_oldest_lsn = page->oldest_modification;
+      m_oldest_lsn > page->get_oldest_lsn()) {
+    m_oldest_lsn = page->get_oldest_lsn();
   }
 
   return (true);
@@ -1799,10 +1799,11 @@ void Arch_Page_Sys::track_page(buf_page_t *bpage, lsn_t track_lsn,
 
 /** Get page IDs from a specific position.
 Caller must ensure that read_len doesn't exceed the block.
+@param[in]	group		group whose pages we're interested in
 @param[in]	read_pos	position in archived data
 @param[in]	read_len	amount of data to read
 @param[out]	read_buff	buffer to return the page IDs.
-                                Caller must allocate the buffer.
+@note Caller must allocate the buffer.
 @return true if we could successfully read the block. */
 bool Arch_Page_Sys::get_pages(Arch_Group *group, Arch_Page_Pos *read_pos,
                               uint read_len, byte *read_buff) {
@@ -2198,7 +2199,13 @@ void Arch_Page_Sys::track_initial_pages() {
     uint page_count;
     uint skip_count;
 
-    bpage = UT_LIST_GET_LAST(buf_pool->flush_list);
+    bpage = buf_pool->oldest_hp.get();
+    if (bpage != nullptr) {
+      ut_ad(bpage->in_flush_list);
+    } else {
+      bpage = UT_LIST_GET_LAST(buf_pool->flush_list);
+    }
+
     page_count = 0;
     skip_count = 0;
 
@@ -2226,7 +2233,7 @@ void Arch_Page_Sys::track_initial_pages() {
       earlier its travel and still haven't finished.
       The "much much" part is defined by the maximum
       allowed lag - log_buffer_flush_order_lag(). */
-      if (bpage->oldest_modification >
+      if (bpage->get_oldest_lsn() >
           buf_pool->max_lsn_io + log_buffer_flush_order_lag(*log_sys)) {
         /* All pages with oldest_modification
         smaller than bpage->oldest_modification

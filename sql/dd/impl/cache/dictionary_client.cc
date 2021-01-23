@@ -114,42 +114,6 @@ class MDL_checker {
   /**
     Private helper function for asserting MDL for tables.
 
-    @note For temporary tables, we have no locks.
-
-    @param   thd            Thread context.
-    @param   schema_name    Schema name to use in the MDL key.
-    @param   object_name    Object name to use in the MDL key.
-    @param   mdl_namespace  MDL key namespace to use.
-    @param   lock_type      Weakest lock type accepted.
-
-    @return true if we have the required lock, otherwise false.
-  */
-
-  static bool is_locked(THD *thd, const char *schema_name,
-                        const char *object_name,
-                        MDL_key::enum_mdl_namespace mdl_namespace,
-                        enum_mdl_type lock_type) {
-    // For the schema name part, the behavior is dependent on whether
-    // the schema name is supplied explicitly in the sql statement
-    // or not. If it is, the case sensitive name is locked. If only
-    // the table name is supplied in the SQL statement, then the
-    // current schema is used as the schema part of the key, and in
-    // that case, the lowercase name is locked. This applies only
-    // when l_c_t_n == 2. To verify, we therefor use both variants
-    // of the schema name.
-    char schema_name_buf[NAME_LEN + 1];
-    return thd->mdl_context.owns_equal_or_stronger_lock(
-               mdl_namespace, schema_name, object_name, lock_type) ||
-           thd->mdl_context.owns_equal_or_stronger_lock(
-               mdl_namespace,
-               dd::Object_table_definition_impl::fs_name_case(schema_name,
-                                                              schema_name_buf),
-               object_name, lock_type);
-  }
-
-  /**
-    Private helper function for asserting MDL for tables.
-
     @note We need to retrieve the schema name, since this is required
           for the MDL key.
 
@@ -183,19 +147,29 @@ class MDL_checker {
     DBUG_ASSERT(!thd->is_dd_system_thread());
     DBUG_ASSERT(schema);
 
-    // We must take l_c_t_n into account when reconstructing the
-    // MDL key from the table name.
+    // We must take l_c_t_n into account when reconstructing the MDL key
+    // from the schema and table name, and we need buffers for this purpose.
     char table_name_buf[NAME_LEN + 1];
+    char schema_name_buf[NAME_LEN + 1];
 
-    if (!my_strcasecmp(system_charset_info, schema->name().c_str(),
-                       "information_schema"))
-      return is_locked(thd, schema->name().c_str(), table->name().c_str(),
-                       MDL_key::TABLE, lock_type);
+    const char *table_name = table->name().c_str();
+    const char *schema_name = dd::Object_table_definition_impl::fs_name_case(
+        schema->name(), schema_name_buf);
 
-    return is_locked(thd, schema->name().c_str(),
-                     dd::Object_table_definition_impl::fs_name_case(
-                         table->name(), table_name_buf),
-                     MDL_key::TABLE, lock_type);
+    // Information schema tables and views are always locked in upper
+    // case independently of lower_case_table_names. At this point, the
+    // table name should aldready be converted to upper case. This is
+    // asserted in the mdl system when checking the lock below. For non-
+    // I_S tables, the table name must be converted to the appropriate
+    // character case.
+    if (my_strcasecmp(system_charset_info, schema->name().c_str(),
+                      "information_schema")) {
+      table_name = dd::Object_table_definition_impl::fs_name_case(
+          table->name(), table_name_buf);
+    }
+
+    return thd->mdl_context.owns_equal_or_stronger_lock(
+        MDL_key::TABLE, schema_name, table_name, lock_type);
   }
 
   /**
@@ -2193,6 +2167,43 @@ bool Dictionary_client::fetch_global_components(Const_ptr_vec<T> *coll) {
   return false;
 }
 
+// Check if a user is referenced as definer by some object of the given type.
+template <typename T>
+bool Dictionary_client::is_user_definer(const LEX_USER &user,
+                                        bool *is_definer) const {
+  // Start RO transaction.
+  dd::Transaction_ro trx(m_thd, ISO_READ_COMMITTED);
+
+  // Register and open tables.
+  trx.otx.register_tables<T>();
+  Raw_table *entity_table = trx.otx.get_table<T>();
+  DBUG_ASSERT(entity_table);
+
+  if (trx.otx.open_tables()) {
+    DBUG_ASSERT(m_thd->is_system_thread() || m_thd->killed ||
+                m_thd->is_error());
+    return true;
+  }
+
+  // Prepare object key and open the record set.
+  const String_type definer = String_type(user.user.str, user.user.length) +
+                              String_type("@") +
+                              String_type(user.host.str, user.host.length);
+
+  std::unique_ptr<Object_key> object_key(
+      T::DD_table::create_key_by_definer(definer));
+  std::unique_ptr<Raw_record_set> rs;
+  if (entity_table->open_record_set(object_key.get(), rs)) {
+    DBUG_ASSERT(m_thd->is_system_thread() || m_thd->killed ||
+                m_thd->is_error());
+    return true;
+  }
+
+  // If there are records in the set, then this user is definer.
+  *is_definer = (rs->current_record() != nullptr);
+  return false;
+}
+
 template <typename T>
 bool Dictionary_client::fetch_referencing_views_object_id(
     const char *schema, const char *tbl_or_sf_name,
@@ -2895,6 +2906,9 @@ template bool Dictionary_client::fetch_schema_components(
 template bool Dictionary_client::fetch_schema_components(
     const Schema *, std::vector<const Routine *> *);
 
+template bool Dictionary_client::fetch_schema_components(
+    const Schema *, std::vector<const Function *> *);
+
 template bool Dictionary_client::fetch_global_components(
     std::vector<const Charset *> *);
 
@@ -2918,6 +2932,9 @@ template bool Dictionary_client::fetch_schema_component_names<Event>(
 
 template bool Dictionary_client::fetch_schema_component_names<Trigger>(
     const Schema *, std::vector<String_type> *) const;
+
+template bool Dictionary_client::is_user_definer<Trigger>(const LEX_USER &,
+                                                          bool *) const;
 
 template bool Dictionary_client::fetch_global_component_ids<Table>(
     std::vector<Object_id> *) const;
@@ -3061,6 +3078,8 @@ template void Dictionary_client::remove_uncommitted_objects<View>(bool);
 template bool Dictionary_client::drop(const View *);
 template bool Dictionary_client::store(View *);
 template bool Dictionary_client::update(View *);
+template bool Dictionary_client::is_user_definer<View>(const LEX_USER &,
+                                                       bool *) const;
 
 template bool Dictionary_client::acquire_uncached(Object_id, Event **);
 template bool Dictionary_client::acquire(Object_id, const Event **);
@@ -3074,6 +3093,8 @@ template bool Dictionary_client::acquire_for_modification(const String_type &,
 template bool Dictionary_client::drop(const Event *);
 template bool Dictionary_client::store(Event *);
 template bool Dictionary_client::update(Event *);
+template bool Dictionary_client::is_user_definer<Event>(const LEX_USER &,
+                                                        bool *) const;
 
 template bool Dictionary_client::acquire_uncached(Object_id, Function **);
 template bool Dictionary_client::acquire(Object_id, const Function **);
@@ -3102,6 +3123,8 @@ template bool Dictionary_client::update(Procedure *);
 template bool Dictionary_client::drop(const Routine *);
 template void Dictionary_client::remove_uncommitted_objects<Routine>(bool);
 template bool Dictionary_client::update(Routine *);
+template bool Dictionary_client::is_user_definer<Routine>(const LEX_USER &,
+                                                          bool *) const;
 
 template bool Dictionary_client::acquire<Function>(
     const String_type &, const String_type &,

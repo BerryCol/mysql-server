@@ -363,7 +363,7 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t
   byte value[sizeof(ib_uint32_t)];
 
   /* Write the current meta-data version number. */
-  uint32_t cfg_version = IB_EXPORT_CFG_VERSION_V5;
+  uint32_t cfg_version = IB_EXPORT_CFG_VERSION_V6;
   DBUG_EXECUTE_IF("ib_export_use_cfg_version_3",
                   cfg_version = IB_EXPORT_CFG_VERSION_V3;);
   DBUG_EXECUTE_IF("ib_export_use_cfg_version_99",
@@ -481,6 +481,20 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t
                 strerror(errno), "while writing space_flags.");
 
     return (DB_IO_ERROR);
+  }
+
+  if (cfg_version >= IB_EXPORT_CFG_VERSION_V6) {
+    /* Write compression info */
+    uint8_t compression_type =
+        static_cast<uint8_t>(fil_get_compression(table->space));
+    mach_write_to_1(value, compression_type);
+
+    if (fwrite(&value, 1, sizeof(uint8_t), file) != sizeof(uint8_t)) {
+      ib_senderrf(thd, IB_LOG_LEVEL_WARN, ER_IO_WRITE_ERROR, errno,
+                  strerror(errno), "while writing space_flags.");
+
+      return DB_IO_ERROR;
+    }
   }
 
   return (DB_SUCCESS);
@@ -726,10 +740,10 @@ static bool row_quiesce_table_has_fts_index(
   return (exists);
 }
 
-/** Quiesce the tablespace that the table resides in. */
-void row_quiesce_table_start(dict_table_t *table, /*!< in: quiesce this table */
-                             trx_t *trx) /*!< in/out: transaction/session */
-{
+/** Quiesce the tablespace that the table resides in.
+@param[in] table Quiesce this table
+@param[in,out] trx Transaction/session */
+void row_quiesce_table_start(dict_table_t *table, trx_t *trx) {
   ut_a(trx->mysql_thd != nullptr);
   ut_a(srv_n_purge_threads > 0);
   ut_ad(!srv_read_only_mode);
@@ -788,11 +802,10 @@ void row_quiesce_table_start(dict_table_t *table, /*!< in: quiesce this table */
   ut_a(err == DB_SUCCESS);
 }
 
-/** Cleanup after table quiesce. */
-void row_quiesce_table_complete(
-    dict_table_t *table, /*!< in: quiesce this table */
-    trx_t *trx)          /*!< in/out: transaction/session */
-{
+/** Cleanup after table quiesce.
+@param[in] table Quiesce this table
+@param[in,out] trx Transaction/session */
+void row_quiesce_table_complete(dict_table_t *table, trx_t *trx) {
   ulint count = 0;
 
   ut_a(trx->mysql_thd != nullptr);

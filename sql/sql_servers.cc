@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -60,6 +60,7 @@
 #include "my_macros.h"
 #include "my_psi_config.h"
 #include "my_sys.h"
+#include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/mysql_rwlock_bits.h"
 #include "mysql/components/services/psi_memory_bits.h"
@@ -67,7 +68,6 @@
 #include "mysql/psi/mysql_memory.h"
 #include "mysql/psi/mysql_mutex.h"
 #include "mysql/psi/mysql_rwlock.h"
-#include "mysql/psi/psi_base.h"
 #include "mysqld_error.h"
 #include "sql/auth/auth_acls.h"
 #include "sql/auth/auth_common.h"
@@ -252,9 +252,9 @@ static bool servers_load(THD *thd, TABLE *table) {
   free_root(&mem, MYF(0));
   init_sql_alloc(key_memory_servers, &mem, ACL_ALLOC_BLOCK_SIZE, 0);
 
-  unique_ptr_destroy_only<RowIterator> iterator =
-      init_table_iterator(thd, table, nullptr, false,
-                          /*ignore_not_found_rows=*/false);
+  unique_ptr_destroy_only<RowIterator> iterator = init_table_iterator(
+      thd, table, nullptr,
+      /*ignore_not_found_rows=*/false, /*count_examined_rows=*/false);
   if (iterator == nullptr) return true;
 
   while (!(iterator->Read())) {

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2011, 2020, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2011, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -1824,7 +1824,7 @@ static dict_table_t *fts_create_one_common_table(trx_t *trx,
                            DATA_NOT_NULL, FTS_CONFIG_TABLE_VALUE_COL_LEN, true);
   }
 
-  error = row_create_table_for_mysql(new_table, nullptr, trx);
+  error = row_create_table_for_mysql(new_table, nullptr, nullptr, trx);
 
   if (error == DB_SUCCESS) {
     dict_index_t *index = dict_mem_index_create(
@@ -2019,7 +2019,7 @@ static dict_table_t *fts_create_one_index_table(trx_t *trx,
                          (DATA_MTYPE_MAX << 16) | DATA_UNSIGNED | DATA_NOT_NULL,
                          FTS_INDEX_ILIST_LEN, true);
 
-  error = row_create_table_for_mysql(new_table, nullptr, trx);
+  error = row_create_table_for_mysql(new_table, nullptr, nullptr, trx);
 
   if (error == DB_SUCCESS) {
     dict_index_t *index = dict_mem_index_create(
@@ -2628,14 +2628,14 @@ static void fts_trx_table_add_op(
   }
 }
 
-/** Notify the FTS system about an operation on an FTS-indexed table. */
-void fts_trx_add_op(trx_t *trx,               /*!< in: InnoDB transaction */
-                    dict_table_t *table,      /*!< in: table */
-                    doc_id_t doc_id,          /*!< in: new doc id */
-                    fts_row_state state,      /*!< in: state of the row */
-                    ib_vector_t *fts_indexes) /*!< in: FTS indexes affected
-                                              (NULL=all) */
-{
+/** Notify the FTS system about an operation on an FTS-indexed table.
+@param[in] trx Innodb transaction
+@param[in] table Table
+@param[in] doc_id Doc id
+@param[in] state State of the row
+@param[in] fts_indexes Fts indexes affected (null=all) */
+void fts_trx_add_op(trx_t *trx, dict_table_t *table, doc_id_t doc_id,
+                    fts_row_state state, ib_vector_t *fts_indexes) {
   fts_trx_table_t *tran_ftt;
   fts_trx_table_t *stmt_ftt;
 
@@ -3128,13 +3128,13 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t
 }
 
 /** Create a new document id.
- @return DB_SUCCESS if all went well else error */
-dberr_t fts_create_doc_id(dict_table_t *table, /*!< in: row is of this table. */
-                          dtuple_t *row,    /* in/out: add doc id value to this
-                                            row. This is the current row that is
-                                            being inserted. */
-                          mem_heap_t *heap) /*!< in: heap */
-{
+@param[in]      table  Row is of this table.
+@param[in,out]  row    Add doc id value to this row. This is the current row
+that is being inserted.
+@param[in]      heap
+@return DB_SUCCESS if all went well else error */
+dberr_t fts_create_doc_id(dict_table_t *table, dtuple_t *row,
+                          mem_heap_t *heap) {
   doc_id_t doc_id;
   dberr_t error = DB_SUCCESS;
 
@@ -3691,10 +3691,14 @@ static ulint fts_add_doc_by_id(fts_trx_table_t *ftt, doc_id_t doc_id,
 
         rw_lock_x_unlock(&table->fts->cache->lock);
 
-        DBUG_EXECUTE_IF("fts_instrument_sync_cache_wait",
-                        srv_fatal_semaphore_wait_threshold = 25;
-                        fts_max_cache_size = 100;
-                        fts_sync(cache->sync, true, true, false););
+        DBUG_EXECUTE_IF("fts_instrument_sync_cache_wait", {
+          ut_a(srv_fatal_semaphore_wait_extend.load() == 0);
+          // we size smaller than permissible min value for this sys var
+          const auto old_fts_max_cache_size = fts_max_cache_size;
+          fts_max_cache_size = 100;
+          fts_sync(cache->sync, true, true, false);
+          fts_max_cache_size = old_fts_max_cache_size;
+        });
 
         DBUG_EXECUTE_IF("fts_instrument_sync",
                         fts_optimize_request_sync_table(table);
@@ -4068,9 +4072,8 @@ static MY_ATTRIBUTE((nonnull, warn_unused_result)) dberr_t
   ibool print_error = FALSE;
   dict_table_t *table = index_cache->index->table;
   const float cutoff = 0.98f;
-  ulint lock_threshold = static_cast<ulint>(
-      (srv_fatal_semaphore_wait_threshold % SRV_SEMAPHORE_WAIT_EXTENSION) *
-      cutoff);
+  ulint lock_threshold = srv_fatal_semaphore_wait_threshold * cutoff;
+
   bool timeout_extended = false;
 
   FTS_INIT_INDEX_TABLE(&fts_table, nullptr, FTS_INDEX_TABLE,
@@ -4112,14 +4115,12 @@ static MY_ATTRIBUTE((nonnull, warn_unused_result)) dberr_t
           ulint cache_lock_time = ut_time_monotonic() - sync_start_time;
           if (cache_lock_time > lock_threshold) {
             if (!timeout_extended) {
-              os_atomic_increment_ulint(&srv_fatal_semaphore_wait_threshold,
-                                        SRV_SEMAPHORE_WAIT_EXTENSION);
+              srv_fatal_semaphore_wait_extend.fetch_add(1);
               timeout_extended = true;
-              lock_threshold += SRV_SEMAPHORE_WAIT_EXTENSION;
+              lock_threshold += 7200;
             } else {
               unlock_cache = true;
-              os_atomic_decrement_ulint(&srv_fatal_semaphore_wait_threshold,
-                                        SRV_SEMAPHORE_WAIT_EXTENSION);
+              srv_fatal_semaphore_wait_extend.fetch_sub(1);
               timeout_extended = false;
             }
           }
@@ -4159,6 +4160,10 @@ static MY_ATTRIBUTE((nonnull, warn_unused_result)) dberr_t
   if (fts_enable_diag_print) {
     printf("Avg number of nodes: %lf\n",
            (double)n_nodes / (double)(n_words > 1 ? n_words : 1));
+  }
+
+  if (timeout_extended) {
+    srv_fatal_semaphore_wait_extend.fetch_sub(1);
   }
 
   return (error);
@@ -4477,8 +4482,8 @@ or greater than fts_max_token_size.
 @param[in]	stopwords	stopwords rb tree
 @param[in]	is_ngram	is ngram parser
 @param[in]	cs		token charset
-@retval	true	if it is not stopword and length in range
-@retval	false	if it is stopword or lenght not in range */
+@retval true	if it is not stopword and length in range
+@retval false	if it is stopword or length not in range */
 bool fts_check_token(const fts_string_t *token, const ib_rbt_t *stopwords,
                      bool is_ngram, const CHARSET_INFO *cs) {
   ut_ad(cs != nullptr || stopwords == nullptr);
@@ -5334,11 +5339,11 @@ ibool fts_wait_for_background_thread_to_start(
   return (done);
 }
 
-/** Add the FTS document id hidden column. */
-void fts_add_doc_id_column(
-    dict_table_t *table, /*!< in/out: Table with FTS index */
-    mem_heap_t *heap)    /*!< in: temporary memory heap, or NULL */
-{
+/** Add the FTS document id hidden column.
+@param[in,out] table Table with FTS index
+@param[in] heap Temporary memory heap, or NULL
+*/
+void fts_add_doc_id_column(dict_table_t *table, mem_heap_t *heap) {
   dict_mem_table_add_col(
       table, heap, FTS_DOC_ID_COL_NAME, DATA_INT,
       dtype_form_prtype(
@@ -5520,11 +5525,11 @@ void fts_savepoint_copy(const fts_savepoint_t *src, /*!< in: source savepoint */
   }
 }
 
-/** Take a FTS savepoint. */
-void fts_savepoint_take(trx_t *trx,         /*!< in: transaction */
-                        fts_trx_t *fts_trx, /*!< in: fts transaction */
-                        const char *name)   /*!< in: savepoint name */
-{
+/** Take a FTS savepoint.
+@param[in] trx Transaction
+@param[in] fts_trx Fts transaction
+@param[in] name Savepoint name */
+void fts_savepoint_take(trx_t *trx, fts_trx_t *fts_trx, const char *name) {
   mem_heap_t *heap;
   fts_savepoint_t *savepoint;
   fts_savepoint_t *last_savepoint;

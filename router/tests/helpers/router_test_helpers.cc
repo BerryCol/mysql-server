@@ -244,9 +244,11 @@ bool wait_for_port_ready(uint16_t port, std::chrono::milliseconds timeout,
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_PASSIVE;
 
+  auto step_ms = 10ms;
   // Valgrind needs way more time
   if (getenv("WITH_VALGRIND")) {
     timeout *= 10;
+    step_ms *= 10;
   }
 
   int status = getaddrinfo(hostname.c_str(), std::to_string(port).c_str(),
@@ -259,7 +261,6 @@ bool wait_for_port_ready(uint16_t port, std::chrono::milliseconds timeout,
   std::shared_ptr<void> exit_freeaddrinfo(nullptr,
                                           [&](void *) { freeaddrinfo(ainfo); });
 
-  const auto MSEC_STEP = 10ms;
   const auto started = std::chrono::steady_clock::now();
   do {
     auto sock_id =
@@ -292,7 +293,7 @@ bool wait_for_port_ready(uint16_t port, std::chrono::milliseconds timeout,
                                 std::generic_category());
       }
 #endif
-      const auto step = std::min(timeout, MSEC_STEP);
+      const auto step = std::min(timeout, step_ms);
       std::this_thread::sleep_for(std::chrono::milliseconds(step));
       timeout -= step;
     }
@@ -421,6 +422,34 @@ std::string get_file_output(const std::string &file_name,
   }
 
   return result;
+}
+
+bool add_line_to_config_file(const std::string &config_path,
+                             const std::string &section_name,
+                             const std::string &key, const std::string &value) {
+  std::ifstream config_stream{config_path};
+  if (!config_stream) return false;
+
+  std::vector<std::string> config;
+  std::string line;
+  bool found{false};
+  while (std::getline(config_stream, line)) {
+    config.push_back(line);
+    if (line == "[" + section_name + "]") {
+      config.push_back(key + "=" + value);
+      found = true;
+    }
+  }
+  config_stream.close();
+  if (!found) return false;
+
+  std::ofstream out_stream{config_path};
+  if (!out_stream) return false;
+
+  std::copy(std::begin(config), std::end(config),
+            std::ostream_iterator<std::string>(out_stream, "\n"));
+  out_stream.close();
+  return true;
 }
 
 void connect_client_and_query_port(unsigned router_port, std::string &out_port,

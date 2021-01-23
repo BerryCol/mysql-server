@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include <mysql/components/services/mysql_cond_service.h>
 #include <mysql/components/services/mysql_mutex_service.h>
 #include <mysql/components/services/mysql_psi_system_service.h>
+#include <mysql/components/services/mysql_query_attributes.h>
 #include <mysql/components/services/mysql_runtime_error_service.h>
 #include <mysql/components/services/mysql_rwlock_service.h>
 
@@ -47,6 +48,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "keyring_iterator_service_imp.h"
 #include "log_builtins_filter_imp.h"
 #include "log_builtins_imp.h"
+#include "log_sink_perfschema_imp.h"
 #include "my_inttypes.h"
 #include "mysql_backup_lock_imp.h"
 #include "mysql_clone_protocol_imp.h"
@@ -64,6 +66,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "sql/log.h"
 #include "sql/mysqld.h"  // srv_registry
 #include "sql/server_component/mysql_admin_session_imp.h"
+#include "sql/server_component/mysql_query_attributes_imp.h"
 #include "sql/udf_registration_imp.h"
 #include "storage/perfschema/pfs_services.h"
 #include "system_variable_source_imp.h"
@@ -71,6 +74,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 // Must come after sql/log.h.
 #include "mysql/components/services/log_builtins.h"
+#include "mysql/components/services/log_sink_perfschema.h"
 
 /* Implementation located in the mysql_server component. */
 extern SERVICE_TYPE(mysql_cond_v1)
@@ -150,6 +154,8 @@ log_builtins_imp::wellknown_by_type, log_builtins_imp::wellknown_by_name,
 
     log_builtins_imp::line_item_types_seen,
 
+    log_builtins_imp::line_get_output_buffer,
+
     log_builtins_imp::line_item_iter_acquire,
     log_builtins_imp::line_item_iter_release,
     log_builtins_imp::line_item_iter_first,
@@ -165,6 +171,7 @@ log_builtins_imp::wellknown_by_type, log_builtins_imp::wellknown_by_name,
     log_builtins_imp::errmsg_by_errcode, log_builtins_imp::errcode_by_errsymbol,
 
     log_builtins_imp::label_from_prio,
+    log_builtins_imp::parse_iso8601_timestamp,
 
     log_builtins_imp::open_errstream, log_builtins_imp::write_errstream,
     log_builtins_imp::dedicated_errstream,
@@ -202,6 +209,9 @@ log_builtins_tmp_imp::notify_client END_SERVICE_IMPLEMENTATION();
 BEGIN_SERVICE_IMPLEMENTATION(mysql_server, log_builtins_syseventlog)
 log_builtins_syseventlog_imp::open, log_builtins_syseventlog_imp::write,
     log_builtins_syseventlog_imp::close END_SERVICE_IMPLEMENTATION();
+
+BEGIN_SERVICE_IMPLEMENTATION(mysql_server, log_sink_perfschema)
+log_sink_perfschema_imp::event_add END_SERVICE_IMPLEMENTATION();
 
 BEGIN_SERVICE_IMPLEMENTATION(mysql_server, udf_registration)
 mysql_udf_registration_imp::udf_register,
@@ -307,6 +317,17 @@ BEGIN_SERVICE_IMPLEMENTATION(mysql_server,
                              mysql_audit_api_connection_with_error)
 mysql_audit_api_connection_with_error_imp::emit END_SERVICE_IMPLEMENTATION();
 
+BEGIN_SERVICE_IMPLEMENTATION(mysql_server, mysql_query_attributes_iterator)
+mysql_query_attributes_imp::create, mysql_query_attributes_imp::get_type,
+    mysql_query_attributes_imp::next, mysql_query_attributes_imp::get_name,
+    mysql_query_attributes_imp::release END_SERVICE_IMPLEMENTATION();
+
+BEGIN_SERVICE_IMPLEMENTATION(mysql_server, mysql_query_attribute_string)
+mysql_query_attributes_imp::string_get END_SERVICE_IMPLEMENTATION();
+
+BEGIN_SERVICE_IMPLEMENTATION(mysql_server, mysql_query_attribute_isnull)
+mysql_query_attributes_imp::isnull_get END_SERVICE_IMPLEMENTATION();
+
 BEGIN_COMPONENT_PROVIDES(mysql_server)
 PROVIDES_SERVICE(mysql_server_path_filter, dynamic_loader_scheme_file),
     PROVIDES_SERVICE(mysql_server, persistent_dynamic_loader),
@@ -325,6 +346,7 @@ PROVIDES_SERVICE(mysql_server_path_filter, dynamic_loader_scheme_file),
     PROVIDES_SERVICE(mysql_server, log_builtins_string),
     PROVIDES_SERVICE(mysql_server, log_builtins_tmp),
     PROVIDES_SERVICE(mysql_server, log_builtins_syseventlog),
+    PROVIDES_SERVICE(mysql_server, log_sink_perfschema),
     PROVIDES_SERVICE(mysql_server, udf_registration),
     PROVIDES_SERVICE(mysql_server, udf_registration_aggregate),
     PROVIDES_SERVICE(mysql_server, mysql_udf_metadata),
@@ -360,7 +382,8 @@ PROVIDES_SERVICE(mysql_server_path_filter, dynamic_loader_scheme_file),
     PROVIDES_SERVICE(performance_schema, psi_file_v2),
     PROVIDES_SERVICE(performance_schema, psi_idle_v1),
     PROVIDES_SERVICE(performance_schema, psi_mdl_v1),
-    PROVIDES_SERVICE(performance_schema, psi_memory_v1),
+    /* Obsolete: PROVIDES_SERVICE(performance_schema, psi_memory_v1), */
+    PROVIDES_SERVICE(performance_schema, psi_memory_v2),
     PROVIDES_SERVICE(performance_schema, psi_mutex_v1),
     /* Obsolete: PROVIDES_SERVICE(performance_schema, psi_rwlock_v1), */
     PROVIDES_SERVICE(performance_schema, psi_rwlock_v2),
@@ -373,7 +396,7 @@ PROVIDES_SERVICE(mysql_server_path_filter, dynamic_loader_scheme_file),
     PROVIDES_SERVICE(performance_schema, psi_table_v1),
     /* Obsolete: PROVIDES_SERVICE(performance_schema, psi_thread_v1), */
     /* Obsolete: PROVIDES_SERVICE(performance_schema, psi_thread_v2), */
-    PROVIDES_SERVICE(performance_schema, psi_thread_v3),
+    PROVIDES_SERVICE(performance_schema, psi_thread_v4),
     PROVIDES_SERVICE(performance_schema, psi_transaction_v1),
     /* Deprecated, use pfs_plugin_table_v1. */
     PROVIDES_SERVICE(performance_schema, pfs_plugin_table),
@@ -397,6 +420,10 @@ PROVIDES_SERVICE(mysql_server_path_filter, dynamic_loader_scheme_file),
     PROVIDES_SERVICE(performance_schema, pfs_plugin_column_timestamp_v2),
     PROVIDES_SERVICE(performance_schema, pfs_plugin_column_year_v1),
     PROVIDES_SERVICE(performance_schema, psi_tls_channel_v1),
+
+    PROVIDES_SERVICE(mysql_server, mysql_query_attributes_iterator),
+    PROVIDES_SERVICE(mysql_server, mysql_query_attribute_string),
+    PROVIDES_SERVICE(mysql_server, mysql_query_attribute_isnull),
     END_COMPONENT_PROVIDES();
 
 static BEGIN_COMPONENT_REQUIRES(mysql_server) END_COMPONENT_REQUIRES();

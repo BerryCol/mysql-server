@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2015, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -135,6 +135,8 @@ dd::enum_column_types get_new_field_type(enum_field_types type) {
       return dd::enum_column_types::DOUBLE;
 
     case MYSQL_TYPE_NULL:
+    case MYSQL_TYPE_INVALID:
+    case MYSQL_TYPE_BOOL:
       return dd::enum_column_types::TYPE_NULL;
 
     case MYSQL_TYPE_TIMESTAMP:
@@ -274,7 +276,9 @@ static void prepare_default_value_string(uchar *buf, TABLE *table,
   if (col_obj->has_no_default()) f->set_flag(NO_DEFAULT_VALUE_FLAG);
 
   const bool has_default =
-      (f->type() != FIELD_TYPE_BLOB && !f->is_flag_set(NO_DEFAULT_VALUE_FLAG) &&
+      ((f->type() != FIELD_TYPE_BLOB ||
+        f->has_insert_default_general_value_expression()) &&
+       !f->is_flag_set(NO_DEFAULT_VALUE_FLAG) &&
        !(f->auto_flags & Field::NEXT_NUMBER));
 
   if (f->gcol_info || !has_default) return;
@@ -1147,7 +1151,7 @@ static dd::Foreign_key::enum_rule get_fk_rule(fk_option opt) {
   @param key_count    number of foreign keys
   @param keyinfo      array containing foreign key info
 
-  @retval true if error (error reported), false otherwise.
+  @returns true if error (error reported), false otherwise.
 */
 
 static bool fill_dd_foreign_keys_from_create_fields(
@@ -1494,12 +1498,26 @@ static bool fill_dd_partition_from_create_info(
       // expressions.
       Sql_mode_parse_guard parse_guard(thd);
 
+      /*
+        Because there are lifetime issues with CREATE TABLE and ALTER TABLE
+        when used with prepared statements, the field pointer within an
+        Item_field object may be invalid. However, it is not needed by
+        part_expr->print(), so set it to NULL temporarily.
+        This should be fixed by handling the lifetime issues for DDL operations.
+      */
+      Field *saved = nullptr;
+      if (part_info->part_expr->type() == Item::FIELD_ITEM) {
+        saved = down_cast<Item_field *>(part_info->part_expr)->field;
+        down_cast<Item_field *>(part_info->part_expr)->field = nullptr;
+      }
       // No point in including schema and table name for identifiers
       // since any columns must be in this table.
       part_info->part_expr->print(
           thd, &tmp,
           enum_query_type(QT_TO_SYSTEM_CHARSET | QT_NO_DB | QT_NO_TABLE));
 
+      if (saved != nullptr)
+        down_cast<Item_field *>(part_info->part_expr)->field = saved;
       if (tmp.numchars() > PARTITION_EXPR_CHAR_LEN) {
         my_error(ER_PART_EXPR_TOO_LONG, MYF(0));
         return true;
@@ -1841,9 +1859,9 @@ static Table::enum_row_format dd_get_new_row_format(row_type old_format) {
   @param table The table definition
   @param handler Handler to the storage engine
 
-  @retval true if the engine does not supports the provided SRS id. In that case
-          my_error is called
-  @retval false on success
+  @returns true if the engine does not supports the provided SRS id. In that
+  case my_error is called
+  @returns false on success
 */
 static bool engine_supports_provided_srs_id(THD *thd, const dd::Table &table,
                                             const handler *handler) {
@@ -2061,9 +2079,6 @@ static bool fill_dd_table_from_create_info(
   //
 
   table_options->set("avg_row_length", create_info->avg_row_length);
-
-  if (create_info->row_type != ROW_TYPE_DEFAULT)
-    table_options->set("row_type", create_info->row_type);
 
   // ROW_FORMAT which was explicitly specified by user (if any).
   if (create_info->row_type != ROW_TYPE_DEFAULT)
@@ -2726,9 +2741,9 @@ bool is_general_tablespace_and_encrypted(const KEY k, THD *thd,
    @param[in] t table to check
    @param[out] is_general_tablespace Denotes if we found general tablespace.
 
-   @retval {true, *} in case of errors
-   @retval {false, true} if at least one tablespace is encrypted
-   @retval {false, false} if no tablespace is encrypted
+   @returns {true, *} in case of errors
+   @returns {false, true} if at least one tablespace is encrypted
+   @returns {false, false} if no tablespace is encrypted
  */
 Encrypt_result is_tablespace_encrypted(THD *thd, const Table &t,
                                        bool *is_general_tablespace) {
@@ -2854,9 +2869,9 @@ static void copy_tablespace_names(const HA_CREATE_INFO *ci, partition_info *pi,
    @param[out] is_general_tablespace Marked as true on success if its
                                 general tablespace.
 
-   @retval {true, *} in case of errors
-   @retval {false, true} if at least one tablespace is encrypted
-   @retval {false, false} if no tablespace is encrypted
+   @returns {true, *} in case of errors
+   @returns {false, true} if at least one tablespace is encrypted
+   @returns {false, false} if no tablespace is encrypted
  */
 Encrypt_result is_tablespace_encrypted(THD *thd, const HA_CREATE_INFO *ci,
                                        bool *is_general_tablespace) {
@@ -3022,4 +3037,83 @@ void warn_on_deprecated_prefix_key_partition(THD *thd, const char *schema_name,
   }
 }
 
+bool get_implicit_tablespace_options(THD *thd, const Table *table,
+                                     ulonglong *autoextend_size) {
+  DBUG_ASSERT(table->engine() == "InnoDB");
+
+  /* Find out if the user has specified the tablespace name as
+  'innodb_file_per_table' */
+  String_type name;
+  bool is_file_per_table = table->options().exists("tablespace") &&
+                           !table->options().get("tablespace", &name) &&
+                           name.compare("innodb_file_per_table") == 0;
+
+  /* Find out the tablespace option only for implicit tablespaces or
+  'innodb_file_per_table' tablespace. */
+  if (table->is_explicit_tablespace() && !is_file_per_table) {
+    return false;
+  }
+
+  // AUTOEXTEND_SIZE is a tablespace attribute. In order to find it,
+  // first find the tablespace associated with the table
+  Object_id space_id{};
+  Tablespace *tbsp{};
+
+  if (table->partition_type() == Table::PT_NONE) {
+    // If this is a non-partitioned tables, find out the space id from the first
+    // index
+    const Index *index = *table->indexes().begin();
+
+    if (index) {
+      space_id = index->tablespace_id();
+    }
+  } else {
+    // Find out the space_id from the first index on the first partition in case
+    // of partitioned tables or from the first index on the first sub-partition
+    // if the table has sub-partitions. The implicit tablespace for each
+    // partition or sub-partition will have the same AUTOEXTEND_SIZE value.
+    const Partition *part = *table->partitions().begin();
+
+    if (part) {
+      const Partition_index *index{};
+      if (table->subpartition_type() == Table::ST_NONE) {
+        // First index from the partition
+        index = *part->indexes().begin();
+      } else {
+        // This is a sub-partitioned table. Get the first indexes from the first
+        // sub-partition
+        const Partition *subpart = *part->subpartitions().begin();
+
+        if (subpart) {
+          index = *subpart->indexes().begin();
+        }
+      }
+
+      space_id = index->tablespace_id();
+    }
+  }
+
+  DBUG_ASSERT(space_id != INVALID_OBJECT_ID);
+
+  // Find the tablespace with the given space_id
+  if (space_id != INVALID_OBJECT_ID &&
+      !thd->dd_client()->acquire_uncached_uncommitted<Tablespace>(space_id,
+                                                                  &tbsp) &&
+      tbsp != nullptr) {
+    const Properties &p = tbsp->options();
+
+    if (p.exists("autoextend_size")) {
+      p.get("autoextend_size", autoextend_size);
+    }
+  } else {
+    /* purecov: begin deadcode */
+    // Could not find the implicit tablespace for this table
+    DBUG_ASSERT(false);
+
+    return true;
+    /* purecov: end */
+  }
+
+  return false;
+}
 }  // namespace dd

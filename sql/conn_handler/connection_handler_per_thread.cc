@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2013, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2013, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -34,6 +34,7 @@
 #include "my_macros.h"
 #include "my_psi_config.h"
 #include "my_thread.h"
+#include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/mysql_cond_bits.h"
 #include "mysql/components/services/mysql_mutex_bits.h"
@@ -44,7 +45,6 @@
 #include "mysql/psi/mysql_mutex.h"
 #include "mysql/psi/mysql_socket.h"
 #include "mysql/psi/mysql_thread.h"
-#include "mysql/psi/psi_base.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"  // ER_*
 #include "pfs_thread_provider.h"
@@ -290,9 +290,8 @@ static void *handle_connection(void *arg) {
 #endif /* HAVE_PSI_THREAD_INTERFACE */
     mysql_thread_set_psi_id(thd->thread_id());
     mysql_thread_set_psi_THD(thd);
-    mysql_socket_set_thread_owner(
-        thd->get_protocol_classic()->get_vio()->mysql_socket);
-
+    MYSQL_SOCKET socket = thd->get_protocol_classic()->get_vio()->mysql_socket;
+    mysql_socket_set_thread_owner(socket);
     thd_manager->add_thd(thd);
 
     if (thd_prepare_connection(thd))

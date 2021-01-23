@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1994, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -226,9 +226,8 @@ ibool ha_insert_for_fold_func(
       if (table->adaptive) {
         buf_block_t *prev_block = prev_node->block;
         ut_a(prev_block->frame == page_align(prev_node->data));
-        ut_a(os_atomic_decrement_ulint(&prev_block->n_pointers, 1) <
-             MAX_N_POINTERS);
-        ut_a(os_atomic_increment_ulint(&block->n_pointers, 1) < MAX_N_POINTERS);
+        ut_a(prev_block->n_pointers.fetch_sub(1) - 1 < MAX_N_POINTERS);
+        ut_a(block->n_pointers.fetch_add(1) + 1 < MAX_N_POINTERS);
       }
 
       prev_node->block = block;
@@ -259,7 +258,7 @@ ibool ha_insert_for_fold_func(
 
 #if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
   if (table->adaptive) {
-    ut_a(os_atomic_increment_ulint(&block->n_pointers, 1) < MAX_N_POINTERS);
+    ut_a(block->n_pointers.fetch_add(1) + 1 < MAX_N_POINTERS);
   }
 #endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
 
@@ -311,8 +310,7 @@ void ha_delete_hash_node(hash_table_t *table, /*!< in: hash table */
 #if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
   if (table->adaptive) {
     ut_a(del_node->block->frame = page_align(del_node->data));
-    ut_a(os_atomic_decrement_ulint(&del_node->block->n_pointers, 1) <
-         MAX_N_POINTERS);
+    ut_a(del_node->block->n_pointers.fetch_sub(1) - 1 < MAX_N_POINTERS);
   }
 #endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
 
@@ -351,10 +349,8 @@ ibool ha_search_and_update_if_found_func(
   if (node) {
 #if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
     if (table->adaptive) {
-      ut_a(os_atomic_decrement_ulint(&node->block->n_pointers, 1) <
-           MAX_N_POINTERS);
-      ut_a(os_atomic_increment_ulint(&new_block->n_pointers, 1) <
-           MAX_N_POINTERS);
+      ut_a(node->block->n_pointers.fetch_sub(1) - 1 < MAX_N_POINTERS);
+      ut_a(new_block->n_pointers.fetch_add(1) + 1 < MAX_N_POINTERS);
     }
 
     node->block = new_block;
@@ -368,11 +364,12 @@ ibool ha_search_and_update_if_found_func(
 }
 
 /** Removes from the chain determined by fold all nodes whose data pointer
- points to the page given. */
-void ha_remove_all_nodes_to_page(hash_table_t *table, /*!< in: hash table */
-                                 ulint fold,          /*!< in: fold value */
-                                 const page_t *page)  /*!< in: buffer page */
-{
+ points to the page given.
+@param[in] table Hash table
+@param[in] fold Fold value
+@param[in] page Buffer page */
+void ha_remove_all_nodes_to_page(hash_table_t *table, ulint fold,
+                                 const page_t *page) {
   ha_node_t *node;
 
   ut_ad(table);
@@ -449,10 +446,10 @@ ibool ha_validate(hash_table_t *table, /*!< in: hash table */
 }
 #endif /* defined UNIV_AHI_DEBUG || defined UNIV_DEBUG */
 
-/** Prints info of a hash table. */
-void ha_print_info(FILE *file,          /*!< in: file where to print */
-                   hash_table_t *table) /*!< in: hash table */
-{
+/** Prints info of a hash table.
+@param[in] file File where to print
+@param[in] table Hash table */
+void ha_print_info(FILE *file, hash_table_t *table) {
 #ifdef UNIV_DEBUG
 /* Some of the code here is disabled for performance reasons in production
 builds, see http://bugs.mysql.com/36941 */

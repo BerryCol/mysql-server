@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2016, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -23,24 +23,45 @@
 #ifndef PARSE_TREE_COL_ATTRS_INCLUDED
 #define PARSE_TREE_COL_ATTRS_INCLUDED
 
-#include <type_traits>
+#include <sys/types.h>  // ulong, uint. TODO: replace with cstdint
 
+#include <type_traits>
+#include <vector>
+
+#include "field_types.h"
+#include "lex_string.h"
+#include "m_ctype.h"
+#include "my_alloc.h"
+#include "my_base.h"
+#include "my_compiler.h"
 #include "my_dbug.h"
-#include "mysql/mysql_lex_string.h"
+#include "my_inttypes.h"
+#include "my_sys.h"
 #include "mysql_com.h"
+#include "mysqld_error.h"
 #include "nullable.h"
+#include "sql/derror.h"
+#include "sql/field.h"
 #include "sql/gis/srid.h"
+#include "sql/item.h"
 #include "sql/item_timefunc.h"
+#include "sql/mem_root_array.h"
+#include "sql/parse_location.h"
 #include "sql/parse_tree_helpers.h"  // move_cf_appliers
 #include "sql/parse_tree_node_base.h"
+#include "sql/parser_yystype.h"
 #include "sql/sql_alter.h"
 #include "sql/sql_check_constraint.h"  // Sql_check_constraint_spec
 #include "sql/sql_class.h"
 #include "sql/sql_error.h"
 #include "sql/sql_lex.h"
+#include "sql/sql_list.h"
 #include "sql/sql_parse.h"
+#include "sql/system_variables.h"
 
 using Mysql::Nullable;
+
+class String;
 
 /**
   Parse context for column type attribyte specific parse tree nodes.
@@ -480,6 +501,24 @@ class PT_generated_default_val_column_attr : public PT_column_attr_base {
 
  private:
   Value_generator m_default_value_expression;
+};
+
+/**
+  Node for the @SQL{VISIBLE|INVISIBLE} column attribute
+
+  @ingroup ptn_column_attrs
+*/
+class PT_column_visibility_attr : public PT_column_attr_base {
+ public:
+  explicit PT_column_visibility_attr(bool is_visible)
+      : m_is_visible(is_visible) {}
+  void apply_type_flags(unsigned long *type_flags) const override {
+    *type_flags &= ~FIELD_IS_INVISIBLE;
+    if (!m_is_visible) *type_flags |= FIELD_IS_INVISIBLE;
+  }
+
+ private:
+  const bool m_is_visible;
 };
 
 // Type nodes:

@@ -50,8 +50,8 @@
 #include "my_dbug.h"
 #include "my_io.h"
 #include "my_tree.h"  // element_count
+#include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/psi/mysql_file.h"
-#include "mysql/psi/psi_base.h"
 #include "mysql/service_mysql_alloc.h"
 #include "priority_queue.h"
 #include "sql/field.h"    // Field
@@ -1001,5 +1001,6 @@ bool Unique_on_insert::init() {
 
 void Unique_on_insert::cleanup() {
   reset(false);
-  free_tmp_table(m_table->in_use, m_table);
+  close_tmp_table(m_table->in_use, m_table);
+  free_tmp_table(m_table);
 }

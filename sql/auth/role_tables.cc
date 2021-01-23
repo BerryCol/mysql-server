@@ -34,9 +34,9 @@
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "my_sys.h"
+#include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/mysql_lex_string.h"
-#include "mysql/psi/psi_base.h"
 #include "mysqld_error.h"
 #include "sql/auth/auth_internal.h"
 #include "sql/auth/sql_auth_cache.h"
@@ -211,8 +211,9 @@ bool populate_roles_caches(THD *thd, TABLE_LIST *tablelst) {
 
   {
     roles_edges_table->use_all_columns();
-    iterator = init_table_iterator(thd, roles_edges_table, nullptr, false,
-                                   /*ignore_not_found_rows=*/false);
+    iterator = init_table_iterator(thd, roles_edges_table, nullptr,
+                                   /*ignore_not_found_rows=*/false,
+                                   /*count_examined_rows=*/false);
     if (iterator == nullptr) {
       my_error(ER_TABLE_CORRUPT, MYF(0), roles_edges_table->s->db.str,
                roles_edges_table->s->table_name.str);
@@ -270,8 +271,9 @@ bool populate_roles_caches(THD *thd, TABLE_LIST *tablelst) {
 
     default_role_table->use_all_columns();
 
-    iterator = init_table_iterator(thd, default_role_table, nullptr, false,
-                                   /*ignore_not_found_records=*/false);
+    iterator = init_table_iterator(thd, default_role_table, nullptr,
+                                   /*ignore_not_found_rows=*/false,
+                                   /*count_examined_rows=*/false);
     DBUG_EXECUTE_IF("dbug_fail_in_role_cache_reinit", iterator = nullptr;);
     if (iterator == nullptr) {
       my_error(ER_TABLE_CORRUPT, MYF(0), default_role_table->s->db.str,

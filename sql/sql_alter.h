@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2010, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -32,7 +32,7 @@
 #include "my_dbug.h"
 #include "my_io.h"
 #include "my_sqlcommand.h"
-#include "mysql/psi/psi_base.h"
+#include "mysql/components/services/bits/psi_bits.h"
 #include "nullable.h"
 #include "sql/dd/types/column.h"
 #include "sql/gis/srid.h"
@@ -76,8 +76,8 @@ class Alter_drop {
 };
 
 /**
-  Class representing SET DEFAULT, DROP DEFAULT and RENAME
-  COLUMN clause in ALTER TABLE statement.
+  Class representing SET DEFAULT, DROP DEFAULT, RENAME COLUMN, SET VISIBLE and
+  SET INVISIBLE clause in ALTER TABLE statement.
 */
 
 class Alter_column {
@@ -94,7 +94,13 @@ class Alter_column {
   /// The new colum name.
   const char *m_new_name;
 
-  enum class Type { SET_DEFAULT, DROP_DEFAULT, RENAME_COLUMN };
+  enum class Type {
+    SET_DEFAULT,
+    DROP_DEFAULT,
+    RENAME_COLUMN,
+    SET_COLUMN_VISIBLE,
+    SET_COLUMN_INVISIBLE
+  };
 
  public:
   /// Type of change requested in ALTER TABLE.
@@ -127,6 +133,13 @@ class Alter_column {
         def(nullptr),
         m_new_name(new_name),
         m_type(Type::RENAME_COLUMN) {}
+
+  /// Constructor used while altering column visibility.
+  Alter_column(const char *par_name, bool par_is_visible)
+      : name(par_name), def(nullptr), m_new_name(nullptr) {
+    m_type = (par_is_visible ? Type::SET_COLUMN_VISIBLE
+                             : Type::SET_COLUMN_INVISIBLE);
+  }
 
  private:
   Type m_type;
@@ -328,7 +341,10 @@ class Alter_info {
     /// this is NOT to be set for SECONDARY_ENGINE_ATTRIBUTE as this flag
     /// controls if execution should check if SE supports engine
     /// attributes.
-    ANY_ENGINE_ATTRIBUTE = 1ULL << 39
+    ANY_ENGINE_ATTRIBUTE = 1ULL << 39,
+
+    /// Set for column visibility attribute alter.
+    ALTER_COLUMN_VISIBILITY = 1ULL << 40
   };
 
   enum enum_enable_or_disable { LEAVE_AS_IS, ENABLE, DISABLE };
@@ -590,9 +606,7 @@ class Sql_cmd_common_alter_table : public Sql_cmd_ddl_table {
 
   ~Sql_cmd_common_alter_table() override = 0;  // force abstract class
 
-  enum_sql_command sql_command_code() const override final {
-    return SQLCOM_ALTER_TABLE;
-  }
+  enum_sql_command sql_command_code() const final { return SQLCOM_ALTER_TABLE; }
 };
 
 inline Sql_cmd_common_alter_table::~Sql_cmd_common_alter_table() {}

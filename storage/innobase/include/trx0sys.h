@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2020, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -242,8 +242,8 @@ bool trx_sys_write_binlog_position(const char *last_file, uint64_t last_offset,
 which corresponds to the transaction being committed, external XA transaction
 being prepared or rolled back. In a MySQL replication slave updates the latest
 master binlog position up to which replication has proceeded.
-@param[in]	trx	current transaction
-@param[in,out]	mtr	mini transaction for update */
+@param[in]	trx	Current transaction
+@param[in,out]	mtr	Mini-transaction for update */
 void trx_sys_update_mysql_binlog_offset(trx_t *trx, mtr_t *mtr);
 
 /** Shutdown/Close the transaction system. */
@@ -365,7 +365,7 @@ are persisted to table */
 #define TRX_SYS_TRX_NUM_END = (TRX_SYS_TRX_NUM_GTID + 8)
 
 /** Doublewrite buffer */
-/* @{ */
+/** @{ */
 /** The offset of the doublewrite buffer header on the trx system header page */
 #define TRX_SYS_DOUBLEWRITE (UNIV_PAGE_SIZE - 200)
 /*-------------------------------------------------------------*/
@@ -415,7 +415,7 @@ FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID. */
 
 /** Size of the doublewrite block in pages */
 #define TRX_SYS_DOUBLEWRITE_BLOCK_SIZE FSP_EXTENT_SIZE
-/* @} */
+/** @} */
 
 /** List of undo tablespace IDs. */
 class Space_Ids : public std::vector<space_id_t, ut_allocator<space_id_t>> {
@@ -505,11 +505,9 @@ struct trx_sys_t {
                    read-only during multi-threaded
                    operation. */
 
-  ulint rseg_history_len;
-  /*!< Length of the TRX_RSEG_HISTORY
-  list (update undo logs for committed
-  transactions), protected by
-  rseg->mutex */
+  /** Length of the TRX_RSEG_HISTORY list (update undo logs for committed
+   * transactions). */
+  std::atomic<uint64_t> rseg_history_len;
 
   TrxIdSet rw_trx_set; /*!< Mapping from transaction id
                        to transaction instance */

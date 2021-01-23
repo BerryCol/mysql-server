@@ -368,6 +368,7 @@
 #include "my_sys.h"
 #include "my_systime.h"
 #include "my_thread.h"
+#include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/mysql_cond_bits.h"
 #include "mysql/components/services/mysql_mutex_bits.h"
@@ -377,7 +378,6 @@
 #include "mysql/plugin.h"
 #include "mysql/psi/mysql_cond.h"
 #include "mysql/psi/mysql_mutex.h"
-#include "mysql/psi/psi_base.h"
 #include "mysql/service_mysql_alloc.h"
 #include "mysqld_error.h"
 #include "sql/sql_error.h"
@@ -671,7 +671,7 @@ void debug_sync_init_thread(THD *thd) {
   }
 }
 
-void debug_sync_claim_memory_ownership(THD *thd) {
+void debug_sync_claim_memory_ownership(THD *thd, bool claim) {
   DBUG_TRACE;
   DBUG_ASSERT(thd);
 
@@ -682,14 +682,14 @@ void debug_sync_claim_memory_ownership(THD *thd) {
       st_debug_sync_action *action = ds_control->ds_action;
       st_debug_sync_action *action_end = action + ds_control->ds_allocated;
       for (; action < action_end; action++) {
-        action->signal.mem_claim();
-        action->wait_for.mem_claim();
-        action->sync_point.mem_claim();
+        action->signal.mem_claim(claim);
+        action->wait_for.mem_claim(claim);
+        action->sync_point.mem_claim(claim);
       }
-      my_claim(ds_control->ds_action);
+      my_claim(ds_control->ds_action, claim);
     }
 
-    my_claim(ds_control);
+    my_claim(ds_control, claim);
   }
 }
 

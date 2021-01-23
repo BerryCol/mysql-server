@@ -1,4 +1,4 @@
-# Copyright (c) 2008, 2020, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2008, 2020, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -371,8 +371,6 @@ ENDIF()
 IF (HAVE_JAVA AND HAVE_JDK)
   ADD_SUBDIRECTORY(clusterj)
 ENDIF()
-ADD_SUBDIRECTORY(memcache)
-ADD_SUBDIRECTORY(mcc)
 
 SET(WITH_NDB_NODEJS_DEFAULT ON)
 

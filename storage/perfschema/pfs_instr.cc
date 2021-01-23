@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2008, 2020, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -321,7 +321,9 @@ PFS_mutex *create_mutex(PFS_mutex_class *klass, const void *identity) {
     pfs->m_timed = klass->m_timed;
     pfs->m_mutex_stat.reset();
     pfs->m_owner = nullptr;
+#ifdef LATER_WL2333
     pfs->m_last_locked = 0;
+#endif /* LATER_WL2333 */
     pfs->m_lock.dirty_to_allocated(&dirty_state);
     if (klass->is_singleton()) {
       klass->m_singleton = pfs;
@@ -367,8 +369,10 @@ PFS_rwlock *create_rwlock(PFS_rwlock_class *klass, const void *identity) {
     pfs->m_rwlock_stat.reset();
     pfs->m_writer = nullptr;
     pfs->m_readers = 0;
+#ifdef LATER_WL2333
     pfs->m_last_written = 0;
     pfs->m_last_read = 0;
+#endif /* LATER_WL2333 */
     pfs->m_lock.dirty_to_allocated(&dirty_state);
     if (klass->is_singleton()) {
       klass->m_singleton = pfs;
@@ -482,32 +486,62 @@ void PFS_thread::rebase_memory_stats() {
   }
 }
 
-void PFS_thread::carry_memory_stat_delta(PFS_memory_stat_delta *delta,
-                                         uint index) {
+void PFS_thread::carry_memory_stat_alloc_delta(
+    PFS_memory_stat_alloc_delta *delta, uint index) {
   if (m_account != nullptr) {
-    m_account->carry_memory_stat_delta(delta, index);
+    m_account->carry_memory_stat_alloc_delta(delta, index);
     return;
   }
 
   if (m_user != nullptr) {
-    m_user->carry_memory_stat_delta(delta, index);
+    m_user->carry_memory_stat_alloc_delta(delta, index);
     /* do not return, need to process m_host below */
   }
 
   if (m_host != nullptr) {
-    m_host->carry_memory_stat_delta(delta, index);
+    m_host->carry_memory_stat_alloc_delta(delta, index);
     return;
   }
 
-  carry_global_memory_stat_delta(delta, index);
+  carry_global_memory_stat_alloc_delta(delta, index);
 }
 
-void carry_global_memory_stat_delta(PFS_memory_stat_delta *delta, uint index) {
+void PFS_thread::carry_memory_stat_free_delta(PFS_memory_stat_free_delta *delta,
+                                              uint index) {
+  if (m_account != nullptr) {
+    m_account->carry_memory_stat_free_delta(delta, index);
+    return;
+  }
+
+  if (m_user != nullptr) {
+    m_user->carry_memory_stat_free_delta(delta, index);
+    /* do not return, need to process m_host below */
+  }
+
+  if (m_host != nullptr) {
+    m_host->carry_memory_stat_free_delta(delta, index);
+    return;
+  }
+
+  carry_global_memory_stat_free_delta(delta, index);
+}
+
+void carry_global_memory_stat_alloc_delta(PFS_memory_stat_alloc_delta *delta,
+                                          uint index) {
   PFS_memory_shared_stat *stat;
-  PFS_memory_stat_delta delta_buffer;
+  PFS_memory_stat_alloc_delta delta_buffer;
 
   stat = &global_instr_class_memory_array[index];
-  (void)stat->apply_delta(delta, &delta_buffer);
+  (void)stat->apply_alloc_delta(delta, &delta_buffer);
+}
+
+void carry_global_memory_stat_free_delta(PFS_memory_stat_free_delta *delta,
+                                         uint index) {
+  PFS_memory_shared_stat *stat;
+  PFS_memory_stat_free_delta delta_buffer;
+
+  stat = &global_instr_class_memory_array[index];
+  (void)stat->apply_free_delta(delta, &delta_buffer);
 }
 
 /**
@@ -579,6 +613,9 @@ PFS_thread *create_thread(PFS_thread_class *klass,
     pfs->m_user = nullptr;
     pfs->m_account = nullptr;
     set_thread_account(pfs);
+
+    pfs->m_peer_port = 0;
+    pfs->m_sock_addr_len = 0;
 
     /*
       For child waits, by default,
@@ -828,7 +865,7 @@ char *normalize_filename(const char *filename, uint name_len, char *buffer,
     Also note that, when creating files, this name resolution
     works properly for files that do not exist (yet) on the file system.
   */
-  char dirbuffer[FN_REFLEN];
+  char dirbuffer[FN_REFLEN + 1];
   size_t dirlen = dirname_length(safe_filename);
 
   if (dirlen == 0) {
@@ -1653,6 +1690,32 @@ void aggregate_all_errors(PFS_error_stat *from_array,
   }
 }
 
+void aggregate_all_memory_with_reassign(bool alive,
+                                        PFS_memory_safe_stat *from_array,
+                                        PFS_memory_shared_stat *to_array,
+                                        PFS_memory_shared_stat *global_array) {
+  PFS_memory_safe_stat *from;
+  PFS_memory_safe_stat *from_last;
+  PFS_memory_shared_stat *to;
+
+  from = from_array;
+  from_last = from_array + memory_class_max;
+  to = to_array;
+
+  if (alive) {
+    for (; from < from_last; from++, to++) {
+      memory_partial_aggregate(from, to);
+    }
+  } else {
+    PFS_memory_shared_stat *global;
+    global = global_array;
+    for (; from < from_last; from++, to++, global++) {
+      memory_full_aggregate_with_reassign(from, to, global);
+      from->reset();
+    }
+  }
+}
+
 void aggregate_all_memory(bool alive, PFS_memory_safe_stat *from_array,
                           PFS_memory_shared_stat *to_array) {
   PFS_memory_safe_stat *from;
@@ -1697,9 +1760,11 @@ void aggregate_all_memory(bool alive, PFS_memory_shared_stat *from_array,
   }
 }
 
-void aggregate_all_memory(bool alive, PFS_memory_safe_stat *from_array,
-                          PFS_memory_shared_stat *to_array_1,
-                          PFS_memory_shared_stat *to_array_2) {
+void aggregate_all_memory_with_reassign(bool alive,
+                                        PFS_memory_safe_stat *from_array,
+                                        PFS_memory_shared_stat *to_array_1,
+                                        PFS_memory_shared_stat *to_array_2,
+                                        PFS_memory_shared_stat *global_array) {
   PFS_memory_safe_stat *from;
   PFS_memory_safe_stat *from_last;
   PFS_memory_shared_stat *to_1;
@@ -1715,8 +1780,10 @@ void aggregate_all_memory(bool alive, PFS_memory_safe_stat *from_array,
       memory_partial_aggregate(from, to_1, to_2);
     }
   } else {
-    for (; from < from_last; from++, to_1++, to_2++) {
-      memory_full_aggregate(from, to_1, to_2);
+    PFS_memory_shared_stat *global;
+    global = global_array;
+    for (; from < from_last; from++, to_1++, to_2++, global++) {
+      memory_full_aggregate_with_reassign(from, to_1, to_2, global);
       from->reset();
     }
   }
@@ -2142,8 +2209,10 @@ void aggregate_thread_memory(bool alive, PFS_thread *thread,
       Aggregate MEMORY_SUMMARY_BY_THREAD_BY_EVENT_NAME
       to MEMORY_SUMMARY_BY_ACCOUNT_BY_EVENT_NAME.
     */
-    aggregate_all_memory(alive, thread->write_instr_class_memory_stats(),
-                         safe_account->write_instr_class_memory_stats());
+    aggregate_all_memory_with_reassign(
+        alive, thread->write_instr_class_memory_stats(),
+        safe_account->write_instr_class_memory_stats(),
+        global_instr_class_memory_array);
 
     return;
   }
@@ -2155,9 +2224,11 @@ void aggregate_thread_memory(bool alive, PFS_thread *thread,
       -  MEMORY_SUMMARY_BY_HOST_BY_EVENT_NAME
       in parallel.
     */
-    aggregate_all_memory(alive, thread->write_instr_class_memory_stats(),
-                         safe_user->write_instr_class_memory_stats(),
-                         safe_host->write_instr_class_memory_stats());
+    aggregate_all_memory_with_reassign(
+        alive, thread->write_instr_class_memory_stats(),
+        safe_user->write_instr_class_memory_stats(),
+        safe_host->write_instr_class_memory_stats(),
+        global_instr_class_memory_array);
     return;
   }
 
@@ -2168,9 +2239,10 @@ void aggregate_thread_memory(bool alive, PFS_thread *thread,
       -  MEMORY_SUMMARY_GLOBAL_BY_EVENT_NAME
       in parallel.
     */
-    aggregate_all_memory(alive, thread->write_instr_class_memory_stats(),
-                         safe_user->write_instr_class_memory_stats(),
-                         global_instr_class_memory_array);
+    aggregate_all_memory_with_reassign(
+        alive, thread->write_instr_class_memory_stats(),
+        safe_user->write_instr_class_memory_stats(),
+        global_instr_class_memory_array, global_instr_class_memory_array);
     return;
   }
 
@@ -2179,8 +2251,10 @@ void aggregate_thread_memory(bool alive, PFS_thread *thread,
       Aggregate MEMORY_SUMMARY_BY_THREAD_BY_EVENT_NAME
       to MEMORY_SUMMARY_BY_HOST_BY_EVENT_NAME, directly.
     */
-    aggregate_all_memory(alive, thread->write_instr_class_memory_stats(),
-                         safe_host->write_instr_class_memory_stats());
+    aggregate_all_memory_with_reassign(
+        alive, thread->write_instr_class_memory_stats(),
+        safe_host->write_instr_class_memory_stats(),
+        global_instr_class_memory_array);
     return;
   }
 

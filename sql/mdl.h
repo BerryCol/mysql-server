@@ -934,7 +934,8 @@ class MDL_wait_for_subgraph {
   */
   virtual bool accept_visitor(MDL_wait_for_graph_visitor *gvisitor) = 0;
 
-  static const uint DEADLOCK_WEIGHT_DML = 0;
+  static const uint DEADLOCK_WEIGHT_CO = 0;
+  static const uint DEADLOCK_WEIGHT_DML = 25;
   static const uint DEADLOCK_WEIGHT_ULL = 50;
   static const uint DEADLOCK_WEIGHT_DDL = 100;
 
@@ -997,8 +998,8 @@ class MDL_ticket : public MDL_wait_for_subgraph {
   bool is_incompatible_when_waiting(enum_mdl_type type) const;
 
   /** Implement MDL_wait_for_subgraph interface. */
-  virtual bool accept_visitor(MDL_wait_for_graph_visitor *dvisitor);
-  virtual uint get_deadlock_weight() const;
+  bool accept_visitor(MDL_wait_for_graph_visitor *dvisitor) override;
+  uint get_deadlock_weight() const override;
 
 #ifndef DBUG_OFF
   enum_mdl_duration get_duration() const { return m_duration; }
@@ -1036,7 +1037,7 @@ class MDL_ticket : public MDL_wait_for_subgraph {
         m_psi(nullptr) {
   }
 
-  virtual ~MDL_ticket() { DBUG_ASSERT(m_psi == nullptr); }
+  ~MDL_ticket() override { DBUG_ASSERT(m_psi == nullptr); }
 
   static MDL_ticket *create(MDL_context *ctx_arg, enum_mdl_type type_arg
 #ifndef DBUG_OFF

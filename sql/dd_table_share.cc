@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2014, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -40,10 +40,10 @@
 #include "my_dbug.h"
 #include "my_loglevel.h"
 #include "my_macros.h"
+#include "mysql/components/services/bits/psi_bits.h"
 #include "mysql/components/services/log_builtins.h"
 #include "mysql/components/services/log_shared.h"
 #include "mysql/plugin.h"
-#include "mysql/psi/psi_base.h"
 #include "mysql/udf_registration_types.h"
 #include "mysql_com.h"
 #include "mysqld_error.h"
@@ -452,11 +452,11 @@ static bool prepare_share(THD *thd, TABLE_SHARE *share,
       */
       keyinfo->actual_flags = keyinfo->flags;
 
-      if (use_extended_sk && primary_key < MAX_KEY && key &&
-          !(keyinfo->flags & HA_NOSAME))
-        key_part +=
-            add_pk_parts_to_sk(keyinfo, key, share->key_info, primary_key,
-                               share, handler_file, &usable_parts);
+      if (primary_key < MAX_KEY && key != primary_key &&
+          (ha_option & HA_PRIMARY_KEY_IN_READ_INDEX))
+        key_part += add_pk_parts_to_sk(keyinfo, key, share->key_info,
+                                       primary_key, share, handler_file,
+                                       &usable_parts, use_extended_sk);
 
       /* Skip unused key parts if they exist */
       key_part += keyinfo->unused_key_parts;
@@ -2331,9 +2331,9 @@ bool open_table_def(THD *thd, TABLE_SHARE *share, const dd::Table &table_def) {
 */
 class Open_table_error_handler : public Internal_error_handler {
  public:
-  virtual bool handle_condition(THD *, uint sql_errno, const char *,
-                                Sql_condition::enum_severity_level *,
-                                const char *) {
+  bool handle_condition(THD *, uint sql_errno, const char *,
+                        Sql_condition::enum_severity_level *,
+                        const char *) override {
     return (sql_errno == ER_UNKNOWN_COLLATION ||
             sql_errno == ER_PLUGIN_IS_NOT_LOADED);
   }

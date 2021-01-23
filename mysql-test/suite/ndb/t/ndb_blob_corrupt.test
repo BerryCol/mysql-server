@@ -1,5 +1,4 @@
 -- source include/have_ndb.inc
--- source suite/ndb/include/ndb_find_tools.inc
 -- source suite/ndb/include/backup_restore_setup.inc
 
 # Test is using error insert, check that binaries support it
@@ -55,6 +54,33 @@ truncate table t1;
 --exec $NDB_RESTORE -b $the_backup_id -n 2 --print-data -r --error-insert=2 $NDB_BACKUPS-$the_backup_id >> $NDB_TOOLS_OUTPUT 2>&1
 
 select count(1) into @count_parent_rows_before from t1;
+
+--echo Observe "blob corruption error" failures on queries
+
+--echo Fully ordered OI scan
+--error 1296
+select * from test.t1 order by a;
+show warnings limit 1;
+
+--echo Fully ordered OI scan, different first tuple
+--error 1296
+select * from test.t1 order by a desc;
+show warnings limit 1;
+
+--echo OI scan
+--error 1296
+select * from test.t1 where a > 0;
+show warnings limit 1;
+
+--echo OI scan, different first tuple
+--error 1296
+select * from test.t1 where a < 6;
+show warnings limit 1;
+
+--echo Table scan
+--error 1296
+select * from test.t1;
+show warnings limit 1;
 
 --echo ndb_blob_tool errors out on finding missing blob parts
 --error 1

@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2015, 2020, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -153,7 +153,7 @@ int Program::execute(const std::vector<std::string> &positional_options) {
                               ? new Single_transaction_connection_provider(
                                     this, num_connections, message_handler)
                               : new Thread_specific_connection_provider(this);
-  } catch (const std::exception &e) {
+  } catch (const std::exception &) {
     this->error(Mysql::Tools::Base::Message_data(
         0, "Error during creating connection.",
         Mysql::Tools::Base::Message_type_error));
@@ -192,7 +192,8 @@ int Program::execute(const std::vector<std::string> &positional_options) {
   }
   I_crawler *crawler =
       new Mysql_crawler(connection_provider, message_handler, id_generator,
-                        m_mysql_chain_element_options, this);
+                        m_mysql_chain_element_options,
+                        m_mysqldump_tool_chain_maker_options, this);
   m_mysqldump_tool_chain_maker_options->process_positional_options(
       positional_options);
   check_mutually_exclusive_options();

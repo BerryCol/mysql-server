@@ -1,4 +1,4 @@
-# Copyright (c) 2017, 2020, Oracle and/or its affiliates.
+# Copyright (c) 2017, 2020, Oracle and/or its affiliates. All rights reserved.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -45,7 +45,7 @@ SET (DEB_RULES_DEBUG_CMAKE
 SET (DEB_RULES_DEBUG_MAKE
 "
 	cd debug && \\
-	$(MAKE) -j8 VERBOSE=1
+	$(MAKE) $(JOBS) VERBOSE=1
 ")
 
 SET (DEB_RULES_DEBUG_EXTRA
@@ -70,6 +70,8 @@ usr/lib/mysql/plugin/debug/component_log_sink_json.so
 usr/lib/mysql/plugin/debug/component_log_sink_syseventlog.so
 usr/lib/mysql/plugin/debug/component_mysqlbackup.so
 usr/lib/mysql/plugin/debug/component_validate_password.so
+usr/lib/mysql/plugin/debug/component_query_attributes.so
+usr/lib/mysql/plugin/debug/component_reference_cache.so
 usr/lib/mysql/plugin/debug/ddl_rewriter.so
 usr/lib/mysql/plugin/debug/group_replication.so
 usr/lib/mysql/plugin/debug/connection_control.so
@@ -139,6 +141,7 @@ usr/lib/mysql/plugin/debug/libtest_sql_lock.so
 usr/lib/mysql/plugin/debug/libtest_sql_processlist.so
 usr/lib/mysql/plugin/debug/libtest_sql_replication.so
 usr/lib/mysql/plugin/debug/libtest_sql_shutdown.so
+usr/lib/mysql/plugin/debug/libtest_sql_sleep_is_connected.so
 usr/lib/mysql/plugin/debug/libtest_sql_stmt.so
 usr/lib/mysql/plugin/debug/libtest_sql_sqlmode.so
 usr/lib/mysql/plugin/debug/libtest_sql_stored_procedures_functions.so
@@ -187,6 +190,7 @@ usr/lib/mysql/plugin/debug/data_masking.so
 usr/lib/mysql/plugin/debug/keyring_okv.so
 usr/lib/mysql/plugin/debug/keyring_encrypted_file.so
 usr/lib/mysql/plugin/debug/keyring_hashicorp.so
+usr/lib/mysql/plugin/debug/keyring_oci.so
 usr/lib/mysql/plugin/debug/openssl_udf.so
 usr/lib/mysql/plugin/debug/thread_pool.so
 usr/lib/mysql/plugin/debug/firewall.so

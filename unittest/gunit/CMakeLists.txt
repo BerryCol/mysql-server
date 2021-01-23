@@ -24,16 +24,28 @@ IF(NOT GMOCK_FOUND OR NOT WITH_UNIT_TESTS)
   RETURN()
 ENDIF()
 
+IF(WITH_LTO OR CMAKE_COMPILER_FLAG_WITH_LTO)
+  # We get ODR violations because of multiple bison parsers.
+  MY_CHECK_CXX_COMPILER_WARNING("error=odr" HAS_WARN_FLAG)
+  IF(HAS_WARN_FLAG)
+    STRING_APPEND(CMAKE_EXE_LINKER_FLAGS " ${HAS_WARN_FLAG}")
+  ENDIF()
+ENDIF()
+
 # Some tests require Boost.
 INCLUDE_DIRECTORIES(SYSTEM ${BOOST_PATCHES_DIR} ${BOOST_INCLUDE_DIR})
 
 INCLUDE_DIRECTORIES(SYSTEM ${GMOCK_INCLUDE_DIRS})
+
+# TODO(sgunders): Remove when all GMock tests use MOCK_METHOD().
+STRING(REPLACE "-Wsuggest-override" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 MY_CHECK_CXX_COMPILER_FLAG("-fno-builtin-memcmp" HAVE_NO_BUILTIN_MEMCMP)
 
 SET(DISABLE_PSI_DEFINITIONS
   "DISABLE_PSI_COND"
   "DISABLE_PSI_FILE"
+  "DISABLE_PSI_MEMORY"
   "DISABLE_PSI_METADATA"
   "DISABLE_PSI_MUTEX"
   "DISABLE_PSI_RWLOCK"
@@ -115,9 +127,11 @@ SET(TESTS
   cost_estimate
   dbug
   decimal
+  dphyp
   dynarray
   filesort_buffer
   filesort_compare
+  filesort_mergechunk
   float_compare
   inplace_vector
   integer_digits
@@ -126,6 +140,7 @@ SET(TESTS
   like_range
   m_string
   mdl
+  mem_root_deque
   my_bitmap
   my_error
   my_fileutils
@@ -134,6 +149,7 @@ SET(TESTS
   mysys_base64
   mysys_lf
   mysys_my_b_vprintf
+  mysys_my_checksum
   mysys_my_getopt
   mysys_my_getpw
   mysys_my_loadpath
@@ -174,6 +190,7 @@ SET(TESTS
   collation_loader
   my_rcu_lock
   unhex
+  dns_srv_data
   )
 
 SET(ALL_SMALL_TESTS)
@@ -201,7 +218,9 @@ SET(SERVER_TESTS
   gis_algos
   gis_area
   gis_distance
+  gis_frechet_distance
   gis_geometries
+  gis_hausdorff_distance
   gis_is_simple
   gis_isvalid
   gis_relops
@@ -212,6 +231,7 @@ SET(SERVER_TESTS
   handler
   hash_join
   histograms
+  hypergraph_optimizer
   initialize_password
   insert_delayed
   into_syntax
@@ -291,6 +311,8 @@ SET(SQL_GUNIT_LIB_SOURCE
   ${CMAKE_SOURCE_DIR}/sql/stateless_allocator.cc
   ${CMAKE_SOURCE_DIR}/sql-common/sql_string.cc
   ${CMAKE_SOURCE_DIR}/sql/thr_malloc.cc
+  ${CMAKE_SOURCE_DIR}/sql/join_optimizer/hypergraph.cc
+  ${CMAKE_SOURCE_DIR}/sql/locks/shared_spin_lock.cc
   )
 
 ADD_LIBRARY(sqlgunitlib STATIC ${SQL_GUNIT_LIB_SOURCE})
@@ -363,6 +385,16 @@ MYSQL_ADD_EXECUTABLE(rpl_channel_credentials-t rpl_channel_credentials-t.cc
   LINK_LIBRARIES rpl_channel_credentials_lib gunit_small
 )
 
+ADD_LIBRARY(rpl_commit_order_queue_lib STATIC
+  ${CMAKE_SOURCE_DIR}/sql/changestreams/apply/commit_order_queue.cc
+)
+
+MYSQL_ADD_EXECUTABLE(rpl_commit_order_queue-t rpl_commit_order_queue-t.cc
+  ENABLE_EXPORTS
+  ADD_TEST rpl_commit_order_queue
+  LINK_LIBRARIES rpl_commit_order_queue_lib gunit_small sqlgunitlib
+)
+
 ADD_SUBDIRECTORY(ddl_rewriter)
 ADD_SUBDIRECTORY(innodb)
 ADD_SUBDIRECTORY(keyring)
@@ -372,3 +404,6 @@ ADD_SUBDIRECTORY(group_replication)
 ADD_SUBDIRECTORY(libmysqlgcs)
 ADD_SUBDIRECTORY(temptable)
 ADD_SUBDIRECTORY(binlogevents)
+ADD_SUBDIRECTORY(memory)
+ADD_SUBDIRECTORY(containers)
+ADD_SUBDIRECTORY(locks)

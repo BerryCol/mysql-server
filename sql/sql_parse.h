@@ -68,6 +68,7 @@ bool parse_sql(THD *thd, Parser_state *parser_state,
 
 void free_items(Item *item);
 void cleanup_items(Item *item);
+void bind_fields(Item *first);
 
 Comp_creator *comp_eq_creator(bool invert);
 Comp_creator *comp_equal_creator(bool invert);
@@ -97,9 +98,8 @@ bool is_update_query(enum enum_sql_command command);
 bool is_explainable_query(enum enum_sql_command command);
 bool is_log_table_write_query(enum enum_sql_command command);
 bool alloc_query(THD *thd, const char *packet, size_t packet_length);
-void mysql_parse(THD *thd, Parser_state *parser_state);
+void dispatch_sql_command(THD *thd, Parser_state *parser_state);
 void mysql_reset_thd_for_next_command(THD *thd);
-bool create_select_for_variable(Parse_context *pc, const char *var_name);
 void create_table_set_open_action_and_adjust_tables(LEX *lex);
 int mysql_execute_command(THD *thd, bool first_level = false);
 bool do_command(THD *thd);
@@ -131,8 +131,6 @@ bool sqlcom_can_generate_row_events(enum enum_sql_command command);
 
 bool all_tables_not_ok(THD *thd, TABLE_LIST *tables);
 bool some_non_temp_table_to_be_updated(THD *thd, TABLE_LIST *tables);
-
-bool execute_show(THD *thd, TABLE_LIST *all_tables);
 
 // TODO: remove after refactoring of ALTER DATABASE:
 bool set_default_charset(HA_CREATE_INFO *create_info,

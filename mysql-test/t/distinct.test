@@ -3,6 +3,7 @@
 #but needs to be kept for tests that would need MyISAM in future.
 --source include/force_myisam_default.inc
 --source include/have_myisam.inc
+--source include/not_hypergraph.inc  # Does not support SELECT DISTINCT yet.
 
 #
 # Bug with distinct and INSERT INTO
@@ -107,9 +108,11 @@ explain select distinct t1.a from t1,t3 where t1.a=t3.a;
 # of 4.
 flush status;
 select distinct t1.a from t1,t3 where t1.a=t3.a;
+--skip_if_hypergraph  # Depends on the query plan.
 show status like 'Handler_read%';
 flush status;
 select distinct 1 from t1,t3 where t1.a=t3.a;
+--skip_if_hypergraph  # Depends on the query plan.
 show status like 'Handler_read%';
 
 let $iteration=2;

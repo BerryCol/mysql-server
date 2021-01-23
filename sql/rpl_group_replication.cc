@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2020, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2013, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -538,7 +538,11 @@ bool is_gtid_committed(const Gtid &gtid) {
 
   DBUG_ASSERT(global_gtid_mode.get() != Gtid_mode::OFF);
 
-  return gtid_state->is_executed(gtid);
+  gtid_state->lock_sidno(gtid.sidno);
+  bool result = gtid_state->is_executed(gtid);
+  gtid_state->unlock_sidno(gtid.sidno);
+
+  return result;
 }
 
 unsigned long get_slave_max_allowed_packet() {
@@ -552,3 +556,31 @@ unsigned long get_max_slave_max_allowed_packet() {
 bool is_server_restarting_after_clone() { return clone_startup; }
 
 bool is_server_data_dropped() { return Clone_handler::is_data_dropped(); }
+
+std::string get_group_replication_group_name() {
+  std::string group_name{""};
+  auto set_channel_name_lambda = [](void *const, const char &, size_t) {};
+  auto set_source_uuid_lambda = [](void *const, const char &, size_t) {};
+  auto set_service_state_lambda = [](void *const, bool) {};
+  auto set_group_name_lambda = [](void *const context, const char &value,
+                                  size_t length) {
+    std::string *group_name_ptr = static_cast<std::string *>(context);
+    const size_t max = UUID_LENGTH;
+    length = std::min(length, max);
+    group_name_ptr->assign(&value, length);
+  };
+
+  const GROUP_REPLICATION_CONNECTION_STATUS_CALLBACKS callbacks = {
+      &group_name,
+      set_channel_name_lambda,
+      set_group_name_lambda,
+      set_source_uuid_lambda,
+      set_service_state_lambda,
+  };
+
+  // Query plugin and let callbacks do their job.
+  if (get_group_replication_connection_status_info(callbacks)) {
+    DBUG_PRINT("info", ("Group Replication stats not available!"));
+  }
+  return group_name;
+}

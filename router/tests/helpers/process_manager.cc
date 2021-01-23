@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2019, 2020, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -25,6 +25,7 @@
 #include "process_manager.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <iterator>
 #include <stdexcept>
@@ -32,16 +33,12 @@
 #include <thread>
 
 #ifndef _WIN32
-#include <netdb.h>
-#include <netinet/in.h>
 #include <sys/file.h>
-#include <sys/select.h>
-#include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/un.h>
 #include <unistd.h>
 #else
 #define USE_STD_REGEX
+#include <WinSock2.h>
 #include <direct.h>
 #include <io.h>
 #include <stdio.h>
@@ -51,6 +48,11 @@
 #include <fcntl.h>
 
 #include "dim.h"
+#include "mysql/harness/net_ts/buffer.h"
+#include "mysql/harness/net_ts/io_context.h"
+#include "mysql/harness/net_ts/local.h"
+#include "mysql/harness/stdx/expected.h"
+#include "mysql/harness/stdx/string_view.h"
 #include "mysql_session.h"
 #include "mysqlrouter/rest_client.h"
 #include "mysqlrouter/utils.h"
@@ -65,6 +67,12 @@
 
 #include <gtest/gtest.h>  // FAIL
 
+#define EXPECT_NO_ERROR(x) \
+  EXPECT_THAT((x), ::testing::Truly([](auto const &v) { return bool(v); }))
+
+#define ASSERT_NO_ERROR(x) \
+  ASSERT_THAT((x), ::testing::Truly([](auto const &v) { return bool(v); }))
+
 using mysql_harness::Path;
 using mysql_harness::ProcessLauncher;
 Path ProcessManager::origin_dir_;
@@ -73,17 +81,204 @@ Path ProcessManager::plugin_dir_;
 Path ProcessManager::mysqlrouter_exec_;
 Path ProcessManager::mysqlserver_mock_exec_;
 
+using namespace std::chrono_literals;
+
+#ifdef _WIN32
+
+template <class Clock>
+stdx::expected<ProcessManager::notify_socket_t, std::error_code> accept_until(
+    ProcessManager::wait_socket_t &sock,
+    typename Clock::time_point const &end_time) {
+  using clock_type = Clock;
+  do {
+    auto accept_res = sock.accept();
+    if (!accept_res) {
+      const auto ec = accept_res.error();
+      const std::error_code ec_pipe_listening{ERROR_PIPE_LISTENING,  // 536
+                                              std::system_category()};
+
+      if (ec != ec_pipe_listening) {
+        return accept_res.get_unexpected();
+      }
+
+      // nothing is connected yet, sleep a bit an retry.
+
+      std::this_thread::sleep_for(100ms);
+    } else {
+      return accept_res;
+    }
+  } while (clock_type::now() < end_time);
+
+  return stdx::make_unexpected(make_error_code(std::errc::timed_out));
+}
+
+stdx::expected<void, std::error_code> ProcessManager::wait_for_notified(
+    wait_socket_t &sock, const std::string &expected_notification,
+    std::chrono::milliseconds timeout) {
+  using clock_type = std::chrono::system_clock;
+  const auto start_time = clock_type::now();
+  const auto end_time = start_time + timeout;
+
+  sock.native_non_blocking(true);
+
+  auto accept_res = accept_until<clock_type>(sock, end_time);
+  if (!accept_res) {
+    return accept_res.get_unexpected();
+  }
+
+  auto accepted = std::move(accept_res.value());
+
+  // make the read non-blocking.
+  const auto non_block_res = accepted.native_non_blocking(true);
+  if (!non_block_res) {
+    return non_block_res.get_unexpected();
+  }
+
+  const size_t BUFF_SIZE = 512;
+  std::array<char, BUFF_SIZE> buff;
+
+  do {
+    const auto read_res =
+        net::read(accepted, net::buffer(buff), net::transfer_at_least(1));
+    if (!read_res) {
+      if (read_res.error() !=
+          std::error_code{ERROR_NO_DATA, std::system_category()}) {
+        return read_res.get_unexpected();
+      }
+
+      // there was no data. Wait a bit and try again.
+      std::this_thread::sleep_for(10ms);
+    } else {
+      const auto bytes_read = read_res.value();
+
+      if (bytes_read >= expected_notification.size()) {
+        if (stdx::string_view(expected_notification) ==
+            stdx::string_view(buff.data(), expected_notification.size())) {
+          return {};
+        }
+      } else {
+        // too short
+        std::cerr << __LINE__ << ": too short" << std::endl;
+      }
+    }
+
+    // either not matched, or no data yet.
+  } while (clock_type::now() < end_time);
+
+  return stdx::make_unexpected(make_error_code(std::errc::timed_out));
+}
+
+#else
+stdx::expected<void, std::error_code> ProcessManager::wait_for_notified(
+    wait_socket_t &sock, const std::string &expected_notification,
+    std::chrono::milliseconds timeout) {
+  const size_t BUFF_SIZE = 512;
+  std::array<char, BUFF_SIZE> buff;
+
+  if (getenv("WITH_VALGRIND")) {
+    timeout *= 10;
+  }
+
+  while (true) {
+    std::array<pollfd, 1> fds = {{{sock.native_handle(), POLLIN, 0}}};
+    const auto poll_res =
+        net::impl::poll::poll(fds.data(), fds.size(), timeout);
+    if (!poll_res) {
+      return poll_res.get_unexpected();
+    }
+
+    const auto read_res =
+        net::read(sock, net::buffer(buff), net::transfer_at_least(1));
+    if (!read_res) {
+      return read_res.get_unexpected();
+    } else {
+      const auto bytes_read = read_res.value();
+
+      if (bytes_read >= expected_notification.size()) {
+        if (stdx::string_view(expected_notification) ==
+            stdx::string_view(buff.data(), expected_notification.size())) {
+          return {};
+        }
+      } else {
+        // too short
+        std::cerr << __LINE__ << ": too short" << std::endl;
+      }
+    }
+  }
+}
+
+#endif
+
+stdx::expected<void, std::error_code> ProcessManager::wait_for_notified_ready(
+    wait_socket_t &sock, std::chrono::milliseconds timeout) {
+  return wait_for_notified(sock, "READY=1", timeout);
+}
+
+stdx::expected<void, std::error_code>
+ProcessManager::wait_for_notified_stopping(wait_socket_t &sock,
+                                           std::chrono::milliseconds timeout) {
+  return wait_for_notified(
+      sock, "STOPPING=1\nSTATUS=Router shutdown in progress\n", timeout);
+}
+
+static std::string generate_notify_socket_path(const std::string &tmp_dir) {
+  const std::string unique_id =
+      mysql_harness::RandomGenerator().generate_identifier(
+          12, mysql_harness::RandomGenerator::AlphabetLowercase);
+
+#ifdef _WIN32
+  (void)tmp_dir;
+  return std::string("\\\\.\\pipe\\") + unique_id;
+#else
+  Path result(tmp_dir);
+  result.append(unique_id);
+
+  return result.str();
+#endif
+}
+
 ProcessWrapper &ProcessManager::launch_command(
     const std::string &command, const std::vector<std::string> &params,
-    int expected_exit_code, bool catch_stderr) {
-  if (command.empty())
-    throw std::logic_error("path to launchable executable must not be empty");
-
-  ProcessWrapper process(command, params, catch_stderr);
+    int expected_exit_code, bool catch_stderr,
+    std::vector<std::pair<std::string, std::string>> env_vars) {
+  ProcessWrapper process(command, params, env_vars, catch_stderr);
 
   processes_.emplace_back(std::move(process), expected_exit_code);
 
   return std::get<0>(processes_.back());
+}
+
+ProcessWrapper &ProcessManager::launch_command(
+    const std::string &command, const std::vector<std::string> &params,
+    int expected_exit_code, bool catch_stderr,
+    std::chrono::milliseconds wait_notified_ready) {
+  if (command.empty())
+    throw std::logic_error("path to launchable executable must not be empty");
+
+  std::vector<std::pair<std::string, std::string>> env_vars;
+
+  net::io_context io_ctx;
+
+  ProcessManager::wait_socket_t notify_socket{io_ctx};
+
+  if (wait_notified_ready >= 0ms) {
+    const std::string socket_node =
+        generate_notify_socket_path(get_test_temp_dir_name());
+
+    EXPECT_NO_ERROR(notify_socket.open());
+    EXPECT_NO_ERROR(notify_socket.bind({socket_node}));
+
+    env_vars.emplace_back("NOTIFY_SOCKET", socket_node);
+  }
+
+  auto &result = launch_command(command, params, expected_exit_code,
+                                catch_stderr, env_vars);
+
+  if (wait_notified_ready >= 0ms) {
+    EXPECT_TRUE(wait_for_notified_ready(notify_socket, wait_notified_ready));
+  }
+
+  return result;
 }
 
 static std::vector<std::string> build_exec_args(
@@ -96,9 +291,17 @@ static std::vector<std::string> build_exec_args(
   }
 
   if (getenv("WITH_VALGRIND")) {
-    args.emplace_back("valgrind");
-    args.emplace_back("--error-exitcode=1");
+    const auto valgrind_exe = getenv("VALGRIND_EXE");
+    args.emplace_back(valgrind_exe ? valgrind_exe : "valgrind");
+    args.emplace_back("--error-exitcode=77");
     args.emplace_back("--quiet");
+#if 0
+    args.emplace_back("--leak-check=full");
+    args.emplace_back("--show-leak-kinds=all");
+    // when debugging mem-leaks reported by ASAN, it can help to use valgrind
+    // instead and enable these options.
+    args.emplace_back("--errors-for-leak-kinds=all");
+#endif
   }
 
   args.emplace_back(mysqlrouter_exec);
@@ -107,50 +310,81 @@ static std::vector<std::string> build_exec_args(
 }
 
 ProcessWrapper &ProcessManager::launch_router(
-    const std::vector<std::string> &params, int expected_exit_code,
-    bool catch_stderr, bool with_sudo) {
+    const std::vector<std::string> &params, int expected_exit_code /*= 0*/,
+    bool catch_stderr /*= true*/, bool with_sudo /*= false*/,
+    std::chrono::milliseconds wait_for_notify_ready /*= 5s*/) {
   std::vector<std::string> args =
       build_exec_args(mysqlrouter_exec_.str(), with_sudo);
 
   // 1st argument is special - it needs to be passed as "command" to
-  // launch_router()
+  // launch_command()
   std::string cmd = args.at(0);
   args.erase(args.begin());
   std::copy(params.begin(), params.end(), std::back_inserter(args));
 
-  auto &router = launch_command(cmd, args, expected_exit_code, catch_stderr);
+  auto &router = launch_command(cmd, args, expected_exit_code, catch_stderr,
+                                wait_for_notify_ready);
   router.logging_dir_ = logging_dir_.name();
   router.logging_file_ = "mysqlrouter.log";
 
   return router;
 }
 
+std::vector<std::string> ProcessManager::mysql_server_mock_cmdline_args(
+    const std::string &json_file, uint16_t port, uint16_t http_port,
+    uint16_t x_port, const std::string &module_prefix /* = "" */,
+    const std::string &bind_address /*= "0.0.0.0"*/) {
+  std::vector<std::string> server_params{
+      "--filename",     json_file,             //
+      "--port",         std::to_string(port),  //
+      "--bind-address", bind_address,
+  };
+
+  server_params.emplace_back("--module-prefix");
+  if (module_prefix.empty()) {
+    server_params.emplace_back(get_data_dir().str());
+  } else {
+    server_params.emplace_back(module_prefix);
+  }
+
+  if (http_port > 0) {
+    server_params.emplace_back("--http-port");
+    server_params.emplace_back(std::to_string(http_port));
+  }
+
+  if (x_port > 0) {
+    server_params.emplace_back("--xport");
+    server_params.emplace_back(std::to_string(x_port));
+  }
+
+  return server_params;
+}
+
+ProcessWrapper &ProcessManager::launch_mysql_server_mock(
+    const std::vector<std::string> &server_params, int expected_exit_code,
+    std::chrono::milliseconds wait_for_notify_ready /*= 5s*/) {
+  return launch_command(mysqlserver_mock_exec_.str(), server_params,
+                        expected_exit_code, true, wait_for_notify_ready);
+}
+
 ProcessWrapper &ProcessManager::launch_mysql_server_mock(
     const std::string &json_file, unsigned port, int expected_exit_code,
     bool debug_mode, uint16_t http_port, uint16_t x_port,
-    const std::string &module_prefix /* = "" */
-    ,
-    const std::string &bind_address /*= "127.0.0.1"*/) {
+    const std::string &module_prefix /* = "" */,
+    const std::string &bind_address /*= "127.0.0.1"*/,
+    std::chrono::milliseconds wait_for_notify_ready /*= 5s*/) {
   if (mysqlserver_mock_exec_.str().empty())
     throw std::logic_error("path to mysql-server-mock must not be empty");
 
-  std::vector<std::string> server_params(
-      {"--filename=" + json_file, "--port=" + std::to_string(port),
-       "--bind-address=" + bind_address,
-       "--http-port=" + std::to_string(http_port),
-       "--module-prefix=" +
-           (!module_prefix.empty() ? module_prefix : get_data_dir().str())});
+  auto server_params = mysql_server_mock_cmdline_args(
+      json_file, port, http_port, x_port, module_prefix, bind_address);
 
   if (debug_mode) {
     server_params.emplace_back("--verbose");
   }
 
-  if (x_port > 0) {
-    server_params.emplace_back("--xport=" + std::to_string(x_port));
-  }
-
-  return launch_command(mysqlserver_mock_exec_.str(), server_params,
-                        expected_exit_code, true);
+  return launch_mysql_server_mock(server_params, expected_exit_code,
+                                  wait_for_notify_ready);
 }
 
 std::map<std::string, std::string> ProcessManager::get_DEFAULT_defaults()
@@ -221,6 +455,7 @@ std::string ProcessManager::create_state_file(const std::string &dir_name,
   }
 
   ofs_config << content;
+  ofs_config.flush();
   ofs_config.close();
 
   return file_path.str();
@@ -253,7 +488,7 @@ void ProcessManager::ensure_clean_exit() {
   for (auto &proc : processes_) {
     try {
       check_exit_code(std::get<0>(proc), std::get<1>(proc));
-    } catch (const std::exception &e) {
+    } catch (const std::exception &) {
       FAIL() << "PID: " << std::get<0>(proc).get_pid()
              << " didn't exit as expected";
     }
@@ -263,6 +498,10 @@ void ProcessManager::ensure_clean_exit() {
 void ProcessManager::check_exit_code(ProcessWrapper &process,
                                      int expected_exit_code,
                                      std::chrono::milliseconds timeout) {
+  if (getenv("WITH_VALGRIND")) {
+    timeout *= 10;
+  }
+
   int result{0};
   try {
     result = process.wait_for_exit(timeout);
@@ -279,6 +518,8 @@ void ProcessManager::check_port(bool should_be_ready, ProcessWrapper &process,
                                 const std::string &hostname) {
   bool ready = wait_for_port_ready(port, timeout, hostname);
 
+// That creates a lot of noise in the logs so gets disabled for now.
+#if 0
   // let's collect some more info
   std::string netstat_info;
   if (ready != should_be_ready) {
@@ -286,11 +527,15 @@ void ProcessManager::check_port(bool should_be_ready, ProcessWrapper &process,
     check_exit_code(netstat);
     netstat_info = netstat.get_full_output();
   }
+#endif
 
   ASSERT_EQ(ready, should_be_ready) << process.get_full_output() << "\n"
                                     << process.get_full_logfile() << "\n"
                                     << "port: " << std::to_string(port) << "\n"
-                                    << "netstat output: " << netstat_info;
+#if 0
+                                    << "netstat output: " << netstat_info
+#endif
+      ;
 }
 
 void ProcessManager::check_port_ready(ProcessWrapper &process, uint16_t port,

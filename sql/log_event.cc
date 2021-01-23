@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2000, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -67,6 +67,7 @@
 #include "query_options.h"
 #include "sql/auth/auth_acls.h"
 #include "sql/binlog_reader.h"
+#include "sql/field_common_properties.h"
 #include "sql/my_decimal.h"   // my_decimal
 #include "sql/rpl_handler.h"  // RUN_HOOK
 #include "sql/rpl_tblmap.h"
@@ -172,6 +173,8 @@ struct mysql_mutex_t;
 PSI_memory_key key_memory_log_event;
 PSI_memory_key key_memory_Incident_log_event_message;
 PSI_memory_key key_memory_Rows_query_log_event_rows_query;
+
+extern bool pfs_processlist_enabled;
 
 using std::max;
 using std::min;
@@ -316,6 +319,8 @@ static const char *HA_ERR(int i) {
       return "HA_ERR_COMPUTE_FAILED";
     case HA_ERR_NO_WAIT_LOCK:
       return "HA_ERR_NO_WAIT_LOCK";
+    case HA_ERR_FTS_TOO_MANY_NESTED_EXP:
+      return "HA_ERR_FTS_TOO_MANY_NESTED_EXP";
   }
   return "No Error!";
 }
@@ -1167,7 +1172,7 @@ int Log_event::net_send(Protocol *protocol, const char *log_name,
   EVENTS.
 */
 
-void Log_event::init_show_field_list(List<Item> *field_list) {
+void Log_event::init_show_field_list(mem_root_deque<Item *> *field_list) {
   field_list->push_back(new Item_empty_string("Log_name", 20));
   field_list->push_back(new Item_return_int("Pos", MY_INT32_NUM_DECIMAL_DIGITS,
                                             MYSQL_TYPE_LONGLONG));
@@ -2172,6 +2177,8 @@ static size_t log_event_print_value(IO_CACHE *file, const uchar *ptr, uint type,
       }
       return length + meta;
     }
+    case MYSQL_TYPE_BOOL:
+    case MYSQL_TYPE_INVALID:
     default: {
       char tmp[5];
       snprintf(tmp, sizeof(tmp), "%04x", meta);
@@ -4011,9 +4018,8 @@ Query_log_event::Query_log_event(THD *thd_arg, const char *query_arg,
             lex->drop_temporary && thd->in_multi_stmt_transaction_mode();
         break;
       case SQLCOM_CREATE_TABLE:
-        cmd_must_go_to_trx_cache =
-            lex->select_lex->get_fields_list()->elements &&
-            thd->is_current_stmt_binlog_format_row();
+        cmd_must_go_to_trx_cache = !lex->select_lex->field_list_is_empty() &&
+                                   thd->is_current_stmt_binlog_format_row();
         cmd_can_generate_row_events =
             ((lex->create_info->options & HA_LEX_CREATE_TMP_TABLE) &&
              thd->in_multi_stmt_transaction_mode()) ||
@@ -4828,7 +4834,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
           Prevent "hanging" of previous rewritten query in SHOW PROCESSLIST.
         */
         thd->reset_rewritten_query();
-        mysql_parse(thd, &parser_state);
+        dispatch_sql_command(thd, &parser_state);
 
         enum_sql_command command = thd->lex->sql_command;
 
@@ -4886,7 +4892,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
         We need to reset it back to the opt_log_slow_slave_statements
         value after the statement execution (and slow logging
         is done). It might have changed if the statement was an
-        admin statement (in which case, down in mysql_parse execution
+        admin statement (in which case, down in dispatch_sql_command execution
         thd->enable_slow_log is set to the value of
         opt_log_slow_admin_statements).
       */
@@ -5060,7 +5066,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
       to ignore it you would use --slave-skip-errors...
 
       To do the comparison we need to know the value of "affected" which the
-      above mysql_parse() computed. And we need to know the value of
+      above dispatch_sql_command() computed. And we need to know the value of
       "affected" in the master's binlog. Both will be implemented later. The
       important thing is that we now have the format ready to log the values
       of "affected" in the binlog. So we can release 5.0.0 before effectively
@@ -5108,6 +5114,10 @@ end:
 
   /* Mark the statement completed. */
   MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());
+
+  /* Maintain compatibility with the legacy processlist. */
+  if (pfs_processlist_enabled) thd->reset_query_for_display();
+
   thd->m_statement_psi = nullptr;
   thd->m_digest = nullptr;
 
@@ -6809,7 +6819,7 @@ int User_var_log_event::do_apply_event(Relay_log_info const *rli) {
     }
   }
   Item_func_set_user_var *e =
-      new Item_func_set_user_var(Name_string(name, name_len, false), it, false);
+      new Item_func_set_user_var(Name_string(name, name_len, false), it);
   /*
     Item_func_set_user_var can't substitute something else on its place =>
     0 can be passed as last argument (reference on item)
@@ -6819,6 +6829,8 @@ int User_var_log_event::do_apply_event(Relay_log_info const *rli) {
     error.
   */
   if (e->fix_fields(thd, nullptr)) return 1;
+
+  if (e->set_entry(thd, true)) return 1;
 
   /*
     A variable can just be considered as a table with
@@ -7042,8 +7054,8 @@ int Append_block_log_event::do_apply_event(Relay_log_info const *rli) {
   slave_load_file_stem(fname, file_id, server_id, ".data");
   if (get_create_or_append()) {
     /*
-      Usually lex_start() is called by mysql_parse(), but we need it here
-      as the present method does not call mysql_parse().
+      Usually lex_start() is called by dispatch_sql_command(), but we need it
+      here as the present method does not call mysql_parse().
     */
     lex_start(thd);
     mysql_reset_thd_for_next_command(thd);
@@ -7508,12 +7520,10 @@ const String *Load_query_generator::generate(size_t *fn_start, size_t *fn_end) {
   }
 
   /* prepare fields-list */
-  if (!cmd->m_opt_fields_or_vars.is_empty()) {
-    List_iterator<Item> li(cmd->m_opt_fields_or_vars);
-    Item *item;
+  if (!cmd->m_opt_fields_or_vars.empty()) {
     str.append(" (");
 
-    while ((item = li++)) {
+    for (Item *item : cmd->m_opt_fields_or_vars) {
       if (item->type() == Item::FIELD_ITEM || item->type() == Item::REF_ITEM)
         append_identifier(thd, &str, item->item_name.ptr(),
                           strlen(item->item_name.ptr()));
@@ -7526,14 +7536,12 @@ const String *Load_query_generator::generate(size_t *fn_start, size_t *fn_end) {
     str.append(')');
   }
 
-  if (!cmd->m_opt_set_fields.is_empty()) {
-    List_iterator<Item> lu(cmd->m_opt_set_fields);
+  if (!cmd->m_opt_set_fields.empty()) {
     List_iterator<String> ls(*cmd->m_opt_set_expr_strings);
-    Item *item;
 
     str.append(" SET ");
 
-    while ((item = lu++)) {
+    for (Item *item : cmd->m_opt_set_fields) {
       String *s = ls++;
 
       append_identifier(thd, &str, item->item_name.ptr(),
@@ -7552,6 +7560,7 @@ const String *Load_query_generator::generate(size_t *fn_start, size_t *fn_end) {
 #ifndef DBUG_OFF
 #ifdef MYSQL_SERVER
 static uchar dbug_extra_row_ndb_info_val = 0;
+static int dbug_extra_row_ndb_info_val_limit = 0;
 
 /**
    set_extra_data
@@ -7561,14 +7570,25 @@ static uchar dbug_extra_row_ndb_info_val = 0;
    thread data structures which can be checked
    when reading the binlog.
 
+   @note if you are using this debug point, find the number of times this
+   method is used for your test and then use that value for the reset_limit
+   parameter in order to avoid inter test contamination.
+
    @param arr  Buffer to use
+   @param reset_limit the limit upon which the counters reset
 */
-static const uchar *set_extra_data(uchar *arr) {
+static const uchar *set_extra_data(uchar *arr, int reset_limit) {
   uchar val = (dbug_extra_row_ndb_info_val++) %
               (EXTRA_ROW_INFO_MAX_PAYLOAD + 1); /* 0 .. MAX_PAYLOAD + 1 */
   arr[EXTRA_ROW_INFO_LEN_OFFSET] = val + EXTRA_ROW_INFO_HEADER_LENGTH;
   arr[EXTRA_ROW_INFO_FORMAT_OFFSET] = val;
   for (uchar i = 0; i < val; i++) arr[EXTRA_ROW_INFO_HEADER_LENGTH + i] = val;
+
+  dbug_extra_row_ndb_info_val_limit++;
+  if (dbug_extra_row_ndb_info_val_limit == reset_limit) {
+    dbug_extra_row_ndb_info_val = 0;
+    dbug_extra_row_ndb_info_val_limit = 0;
+  }
 
   return arr;
 }
@@ -7646,9 +7666,12 @@ Rows_log_event::Rows_log_event(THD *thd_arg, TABLE *tbl_arg,
     set_flags(RELAXED_UNIQUE_CHECKS_F);
 #ifndef DBUG_OFF
   uchar extra_data[255];
-  DBUG_EXECUTE_IF("extra_row_ndb_info_set",
+  DBUG_EXECUTE_IF("extra_row_ndb_info_set_618",
                   /* Set extra row data to a known value */
-                  extra_row_ndb_info = set_extra_data(extra_data););
+                  extra_row_ndb_info = set_extra_data(extra_data, 618););
+  DBUG_EXECUTE_IF("extra_row_ndb_info_set_3",
+                  /* Set extra row data to a known value */
+                  extra_row_ndb_info = set_extra_data(extra_data, 3););
 #endif
   partition_info *part_info = tbl_arg->part_info;
   auto part_id = get_rpl_part_id(part_info);
@@ -8159,7 +8182,7 @@ static uint search_key_in_table(TABLE *table, MY_BITMAP *bi_cols,
           (key == table->s->primary_key) ||
           ((slave_rows_search_algorithms_options & SLAVE_ROWS_INDEX_SCAN) &&
            keyinfo->is_functional_index()) ||
-          keyinfo->flags & HA_MULTI_VALUED_KEY) {
+          keyinfo->flags & HA_MULTI_VALUED_KEY || !keyinfo->is_visible) {
         continue;
       }
       res = are_all_columns_signaled_for_key(keyinfo, bi_cols) ? key : MAX_KEY;
@@ -8662,18 +8685,6 @@ int Rows_log_event::close_record_scan() {
   return error;
 }
 
-/**
-  Fetches next row. If it is a HASH_SCAN over an index, it populates
-  table->record[0] with the next row corresponding to the index. If
-  the indexes are in non-contiguous ranges it fetches record corresponding
-  to the key value in the next range.
-
-  @param first_read Signifying if this is the first time we are reading a row
-          over an index.
-  @retval error code when there are no more records to be fetched or some other
-                    error occurred
-  @retval 0 otherwise.
-*/
 int Rows_log_event::next_record_scan(bool first_read) {
   DBUG_TRACE;
   DBUG_ASSERT(m_table->file->inited);
@@ -10866,26 +10877,6 @@ static inline bool write_tlv_field(
 }
 #endif  // MYSQL_SERVER
 
-#ifndef MYSQL_SERVER
-// For MYSQL_SERVER, the version in field.h is used.
-static inline bool is_numeric_type(uint type) {
-  switch (type) {
-    case MYSQL_TYPE_TINY:
-    case MYSQL_TYPE_SHORT:
-    case MYSQL_TYPE_INT24:
-    case MYSQL_TYPE_LONG:
-    case MYSQL_TYPE_LONGLONG:
-    case MYSQL_TYPE_NEWDECIMAL:
-    case MYSQL_TYPE_FLOAT:
-    case MYSQL_TYPE_DOUBLE:
-      return true;
-    default:
-      return false;
-  }
-  return false;
-}
-#endif  // !MYSQL_SERVER
-
 static inline bool is_character_type(uint type) {
   switch (type) {
     case MYSQL_TYPE_STRING:
@@ -10904,7 +10895,7 @@ static inline bool is_enum_or_set_type(uint type) {
 
 #ifdef MYSQL_SERVER
 static inline bool is_numeric_field(const Field *field) {
-  return is_numeric_type(field->binlog_type());
+  return has_signedess_information_type(field->binlog_type());
 }
 
 static inline bool is_character_field(const Field *field) {
@@ -10944,7 +10935,7 @@ void Table_map_log_event::init_metadata_fields() {
         init_charset_field(&is_enum_or_set_field, ENUM_AND_SET_DEFAULT_CHARSET,
                            ENUM_AND_SET_COLUMN_CHARSET) ||
         init_set_str_value_field() || init_enum_str_value_field() ||
-        init_primary_key_field()) {
+        init_primary_key_field() || init_column_visibility_field()) {
       m_metadata_buf.length(0);
     }
   }
@@ -11200,6 +11191,33 @@ bool Table_map_log_event::init_primary_key_field() {
   }
 }
 
+bool Table_map_log_event::init_column_visibility_field() {
+  /*
+    Buffer to store column visibility. Each column take a bit. Bit is set if
+    column is visible.
+  */
+  StringBuffer<128> buf;
+  unsigned char flags = 0;
+  unsigned char mask = 0x80;
+
+  for (auto field : this->m_fields) {
+    if (!field->is_hidden_by_user()) flags |= mask;
+    mask >>= 1;
+
+    // 8 columns are tested. Store the result and clear the flag.
+    if (mask == 0) {
+      buf.append(flags);
+      flags = 0;
+      mask = 0x80;
+    }
+  }
+
+  // Store the flag for last few columns.
+  if (mask != 0x80) buf.append(flags);
+
+  return write_tlv_field(m_metadata_buf, COLUMN_VISIBILITY, buf);
+}
+
 /*
   Print some useful information for the SHOW BINARY LOG information
   field.
@@ -11256,6 +11274,9 @@ static void get_type_name(uint type, unsigned char **meta_ptr,
   switch (type) {
     case MYSQL_TYPE_LONG:
       snprintf(typestr, typestr_length, "%s", "INT");
+      break;
+    case MYSQL_TYPE_BOOL:
+      snprintf(typestr, typestr_length, "BOOLEAN");
       break;
     case MYSQL_TYPE_TINY:
       snprintf(typestr, typestr_length, "TINYINT");
@@ -11377,6 +11398,7 @@ static void get_type_name(uint type, unsigned char **meta_ptr,
                  geometry_type);
       (*meta_ptr)++;
     } break;
+    case MYSQL_TYPE_INVALID:
     default:
       *typestr = 0;
       break;
@@ -11486,6 +11508,8 @@ void Table_map_log_event::print_columns(
   std::vector<unsigned int>::const_iterator geometry_type_it =
       fields.m_geometry_type.begin();
   uint geometry_type = 0;
+  std::vector<bool>::const_iterator column_visibility_it =
+      fields.m_column_visibility.begin();
 
   my_b_printf(file, "# Columns(");
 
@@ -11532,9 +11556,13 @@ void Table_map_log_event::print_columns(
     my_b_printf(file, "%s", type_name);
 
     // Print UNSIGNED for numeric column
-    if (is_numeric_type(real_type) &&
+    enum_field_types field_type_code = static_cast<enum_field_types>(real_type);
+    if (has_signedess_information_type(field_type_code) &&
         signedness_it != fields.m_signedness.end()) {
-      if (*signedness_it == true) my_b_printf(file, " UNSIGNED");
+      if (*signedness_it == true &&
+          // the UNSIGNED modifier is encoded for YEAR but not used
+          field_type_code != MYSQL_TYPE_YEAR)
+        my_b_printf(file, " UNSIGNED");
       signedness_it++;
     }
 
@@ -11570,6 +11598,12 @@ void Table_map_log_event::print_columns(
     if (cs != nullptr &&
         (is_enum_or_set_type(real_type) || cs->number != my_charset_bin.number))
       my_b_printf(file, " CHARSET %s COLLATE %s", cs->csname, cs->name);
+
+    // If column is invisible then print 'INVISIBLE'.
+    if (column_visibility_it != fields.m_column_visibility.end()) {
+      if (!(*column_visibility_it)) my_b_printf(file, " INVISIBLE");
+      column_visibility_it++;
+    }
 
     if (i != m_colcnt - 1) my_b_printf(file, ",\n#         ");
   }
@@ -12959,6 +12993,14 @@ int Gtid_log_event::do_apply_event(Relay_log_info const *rli) {
       global_sid_lock->unlock();
       return 1;  // out of memory
     }
+  } else if ((spec.type == ANONYMOUS_GTID) &&
+             (rli->m_assign_gtids_to_anonymous_transactions_info.get_type() >
+              Assign_gtids_to_anonymous_transactions_info::enum_type::
+                  AGAT_OFF)) {
+    DBUG_ASSERT(global_gtid_mode.get() == Gtid_mode::ON);
+    spec.type = PRE_GENERATE_GTID;
+    spec.gtid.sidno =
+        rli->m_assign_gtids_to_anonymous_transactions_info.get_sidno();
   }
 
   // set_gtid_next releases global_sid_lock
